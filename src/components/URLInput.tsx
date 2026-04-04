@@ -1,10 +1,20 @@
 import { useState } from "react";
-import { Link, ClipboardPaste, Download, Loader2 } from "lucide-react";
+import { Link, ClipboardPaste, Download, Loader2, Image, Film, X } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+
+interface MediaItem {
+  url: string;
+  type: "video" | "image";
+  thumbnail?: string;
+  filename: string;
+}
 
 const URLInput = () => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [mediaItems, setMediaItems] = useState<MediaItem[]>([]);
+  const [downloading, setDownloading] = useState<Record<number, boolean>>({});
 
   const isValidInstagramUrl = (value: string) => {
     return /instagram\.com\/(p|reel|reels|tv|stories)\//i.test(value);
@@ -22,7 +32,7 @@ const URLInput = () => {
     }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!url.trim()) {
       toast.error("Cole um link do Instagram para continuar.");
       return;
@@ -31,12 +41,66 @@ const URLInput = () => {
       toast.error("Link inválido. Verifique e tente novamente.");
       return;
     }
+
     setLoading(true);
-    // Simulate processing
-    setTimeout(() => {
+    setMediaItems([]);
+
+    try {
+      const { data, error } = await supabase.functions.invoke("instagram-download", {
+        body: { url: url.trim() },
+      });
+
+      if (error) {
+        throw new Error(error.message || "Erro ao processar o link.");
+      }
+
+      if (!data?.success || !data?.items?.length) {
+        throw new Error(data?.error || "Não foi possível encontrar mídia neste link.");
+      }
+
+      setMediaItems(data.items);
+      toast.success(`${data.items.length} arquivo(s) encontrado(s)!`);
+    } catch (err: any) {
+      console.error("Error:", err);
+      toast.error(err.message || "Erro ao processar o link. Tente novamente.");
+    } finally {
       setLoading(false);
-      toast.success("Vídeo pronto para download!");
-    }, 2000);
+    }
+  };
+
+  const handleDownload = async (item: MediaItem, index: number) => {
+    setDownloading((prev) => ({ ...prev, [index]: true }));
+
+    try {
+      const { data, error } = await supabase.functions.invoke("instagram-proxy", {
+        body: { url: item.url, filename: item.filename },
+      });
+
+      if (error) throw new Error("Erro ao baixar o arquivo.");
+
+      // data is already the blob from the edge function
+      const blob = data instanceof Blob ? data : new Blob([data]);
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = item.filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(blobUrl);
+
+      toast.success("Download iniciado!");
+    } catch (err: any) {
+      console.error("Download error:", err);
+      toast.error(err.message || "Erro ao baixar. Tente novamente.");
+    } finally {
+      setDownloading((prev) => ({ ...prev, [index]: false }));
+    }
+  };
+
+  const clearResults = () => {
+    setMediaItems([]);
+    setUrl("");
   };
 
   return (
@@ -74,6 +138,93 @@ const URLInput = () => {
         )}
         {loading ? "Processando..." : "Baixar Agora"}
       </button>
+
+      {/* Results */}
+      {mediaItems.length > 0 && (
+        <div className="mt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-foreground">
+              {mediaItems.length} arquivo(s) encontrado(s)
+            </h3>
+            <button
+              onClick={clearResults}
+              className="text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="grid gap-3">
+            {mediaItems.map((item, index) => (
+              <div
+                key={index}
+                className="flex items-center gap-4 p-4 bg-card rounded-lg border border-border"
+              >
+                {/* Thumbnail / Icon */}
+                <div className="flex-shrink-0 w-16 h-16 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+                  {item.thumbnail ? (
+                    <img
+                      src={item.thumbnail}
+                      alt="Thumbnail"
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none";
+                      }}
+                    />
+                  ) : item.type === "video" ? (
+                    <Film className="h-8 w-8 text-muted-foreground" />
+                  ) : (
+                    <Image className="h-8 w-8 text-muted-foreground" />
+                  )}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate">
+                    {item.filename}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
+                    {item.type === "video" ? (
+                      <>
+                        <Film className="h-3 w-3" /> Vídeo
+                      </>
+                    ) : (
+                      <>
+                        <Image className="h-3 w-3" /> Imagem
+                      </>
+                    )}
+                  </p>
+                </div>
+
+                {/* Download button */}
+                <button
+                  onClick={() => handleDownload(item, index)}
+                  disabled={downloading[index]}
+                  className="flex-shrink-0 instagram-gradient text-primary-foreground px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-70"
+                >
+                  {downloading[index] ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4" />
+                  )}
+                  {downloading[index] ? "..." : "Baixar"}
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {/* Download all */}
+          {mediaItems.length > 1 && (
+            <button
+              onClick={() => mediaItems.forEach((item, i) => handleDownload(item, i))}
+              className="w-full py-3 border border-primary text-primary rounded-lg font-semibold text-sm hover:bg-primary/10 transition-colors flex items-center justify-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Baixar Todos ({mediaItems.length} arquivos)
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 };
