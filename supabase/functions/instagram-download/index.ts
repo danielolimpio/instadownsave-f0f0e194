@@ -66,11 +66,10 @@ async function checkInstagramAccess(shortcode: string, resourceType: InstagramRe
 
     const html = await response.text();
 
-    const hasErrorRoute = /PolarisErrorRoute/.test(html);
     const hasRestrictedAge = /"restricted_age"\s*:\s*(?!false|null|0)\d+/.test(html);
     const unavailable = /This content is no longer available/i.test(html);
 
-    if (hasErrorRoute || hasRestrictedAge || unavailable) {
+    if (hasRestrictedAge || unavailable) {
       return {
         blocked: true,
         reason: resourceType === 'reel' || resourceType === 'tv'
@@ -403,8 +402,12 @@ Deno.serve(async (req) => {
     }
 
     if (items.length === 0) {
+      const extractionError = expectedType === 'video'
+        ? 'Este Reel/IGTV/Story não expõe um arquivo de vídeo público direto no Instagram neste momento.'
+        : 'Não foi possível extrair a mídia; o Instagram não expôs um arquivo público direto para este link.';
+
       return new Response(
-        JSON.stringify({ success: false, error: 'Não foi possível extrair a mídia; o Instagram não expôs um arquivo público direto para este link.' }),
+        JSON.stringify({ success: false, error: extractionError }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
