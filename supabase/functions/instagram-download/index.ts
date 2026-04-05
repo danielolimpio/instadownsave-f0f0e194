@@ -10,6 +10,8 @@ interface MediaItem {
   filename: string;
 }
 
+type InstagramResource = 'p' | 'reel' | 'tv';
+
 function extractShortcode(url: string): string | null {
   const match = url.match(/instagram\.com\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
@@ -20,6 +22,28 @@ function detectContentType(url: string): 'video' | 'image' {
     return 'video';
   }
   return 'image';
+}
+
+function detectResourceType(url: string): InstagramResource {
+  if (/\/reel\//i.test(url) || /\/reels\//i.test(url)) {
+    return 'reel';
+  }
+
+  if (/\/tv\//i.test(url)) {
+    return 'tv';
+  }
+
+  return 'p';
+}
+
+function buildInstagramPaths(shortcode: string, resourceType: InstagramResource): string[] {
+  const preferred = resourceType === 'tv'
+    ? [`tv/${shortcode}`, `reel/${shortcode}`, `p/${shortcode}`]
+    : resourceType === 'reel'
+      ? [`reel/${shortcode}`, `p/${shortcode}`, `tv/${shortcode}`]
+      : [`p/${shortcode}`, `reel/${shortcode}`, `tv/${shortcode}`];
+
+  return preferred;
 }
 
 function extractFromGraphQLMedia(media: any): MediaItem[] {
@@ -63,7 +87,7 @@ function extractFromGraphQLMedia(media: any): MediaItem[] {
 }
 
 // Primary Strategy: GraphQL POST with doc_id (proven working method)
-async function fetchViaGraphQLPost(shortcode: string): Promise<MediaItem[]> {
+async function fetchViaGraphQLPost(shortcode: string, resourceType: InstagramResource): Promise<MediaItem[]> {
   console.log('Strategy: GraphQL POST with doc_id...');
 
   const body = new URLSearchParams({
@@ -114,7 +138,7 @@ async function fetchViaGraphQLPost(shortcode: string): Promise<MediaItem[]> {
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin',
-        'Referer': `https://www.instagram.com/p/${shortcode}/`,
+        'Referer': `https://www.instagram.com/${resourceType}/${shortcode}/`,
       },
       body: body.toString(),
     });
@@ -154,118 +178,129 @@ async function fetchViaGraphQLPost(shortcode: string): Promise<MediaItem[]> {
 }
 
 // Fallback: Embed page scraping
-async function fetchViaEmbed(shortcode: string): Promise<MediaItem[]> {
+async function fetchViaEmbed(shortcode: string, resourceType: InstagramResource): Promise<MediaItem[]> {
   console.log('Strategy: Embed page...');
-  const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+  const paths = buildInstagramPaths(shortcode, resourceType);
 
-  try {
-    const response = await fetch(embedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-      redirect: 'follow',
-    });
-    const html = await response.text();
+  for (const path of paths) {
+    try {
+      const response = await fetch(`https://www.instagram.com/${path}/embed/captioned/`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
+        redirect: 'follow',
+      });
+      const html = await response.text();
 
-    // Try to find video_url in any JSON data
-    const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
-    if (videoUrlMatch) {
-      const videoUrl = videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
-      console.log('✓ Found video_url in embed');
-      return [{
-        url: videoUrl,
-        type: 'video',
-        filename: `instagram_video_${shortcode}.mp4`,
-      }];
+      const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
+      if (videoUrlMatch) {
+        const videoUrl = videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+        console.log('✓ Found video_url in embed via', path);
+        return [{
+          url: videoUrl,
+          type: 'video',
+          filename: `instagram_video_${shortcode}.mp4`,
+        }];
+      }
+
+      const ogVideoMatch = html.match(/<meta\s+(?:property="og:video"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:video")/i);
+      if (ogVideoMatch) {
+        console.log('✓ Found og:video in embed via', path);
+        return [{
+          url: (ogVideoMatch[1] || ogVideoMatch[2]).replace(/&amp;/g, '&'),
+          type: 'video',
+          filename: `instagram_video_${shortcode}.mp4`,
+        }];
+      }
+
+      const ogImageMatch = html.match(/<meta\s+(?:property="og:image"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:image")/i);
+      if (ogImageMatch) {
+        console.log('✓ Found og:image in embed via', path);
+        const imgUrl = (ogImageMatch[1] || ogImageMatch[2]).replace(/&amp;/g, '&');
+        return [{
+          url: imgUrl,
+          type: 'image',
+          filename: `instagram_image_${shortcode}.jpg`,
+        }];
+      }
+    } catch (e) {
+      console.log('Embed error for path', path, e);
     }
-
-    // Try og:image for image posts
-    const ogImageMatch = html.match(/<meta\s+(?:property="og:image"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:image")/i);
-    if (ogImageMatch) {
-      const imgUrl = (ogImageMatch[1] || ogImageMatch[2]).replace(/&amp;/g, '&');
-      return [{
-        url: imgUrl,
-        type: 'image',
-        filename: `instagram_image_${shortcode}.jpg`,
-      }];
-    }
-  } catch (e) {
-    console.log('Embed error:', e);
   }
 
   return [];
 }
 
 // Fallback: Direct page scraping
-async function fetchViaDirectPage(shortcode: string): Promise<MediaItem[]> {
+async function fetchViaDirectPage(shortcode: string, resourceType: InstagramResource): Promise<MediaItem[]> {
   console.log('Strategy: Direct page...');
-  const url = `https://www.instagram.com/p/${shortcode}/`;
+  const paths = buildInstagramPaths(shortcode, resourceType);
 
-  try {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'identity',
-      },
-      redirect: 'follow',
-    });
-    const html = await response.text();
+  for (const path of paths) {
+    try {
+      const response = await fetch(`https://www.instagram.com/${path}/`, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Encoding': 'identity',
+        },
+        redirect: 'follow',
+      });
+      const html = await response.text();
 
-    // sharedData
-    const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.+?});<\/script>/s);
-    if (sharedDataMatch) {
-      try {
-        const data = JSON.parse(sharedDataMatch[1]);
-        const media = data?.entry_data?.PostPage?.[0]?.graphql?.shortcode_media;
-        if (media) return extractFromGraphQLMedia(media);
-      } catch (_e) { /* ignore */ }
+      const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.+?});<\/script>/s);
+      if (sharedDataMatch) {
+        try {
+          const data = JSON.parse(sharedDataMatch[1]);
+          const media = data?.entry_data?.PostPage?.[0]?.graphql?.shortcode_media;
+          if (media) return extractFromGraphQLMedia(media);
+        } catch (_e) { /* ignore */ }
+      }
+
+      const additionalDataMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]+,\s*({.+?})\s*\)\s*;/s);
+      if (additionalDataMatch) {
+        try {
+          const data = JSON.parse(additionalDataMatch[1]);
+          const media = data?.graphql?.shortcode_media || data?.items?.[0];
+          if (media) return extractFromGraphQLMedia(media);
+        } catch (_e) { /* ignore */ }
+      }
+
+      const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
+      if (videoUrlMatch) {
+        console.log('✓ Found video_url in direct page via', path);
+        return [{
+          url: videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'),
+          type: 'video',
+          filename: `instagram_video_${shortcode}.mp4`,
+        }];
+      }
+
+      const ogVideoMatch = html.match(/<meta\s+(?:property="og:video"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:video")/i);
+      if (ogVideoMatch) {
+        console.log('✓ Found og:video in direct page via', path);
+        return [{
+          url: (ogVideoMatch[1] || ogVideoMatch[2]).replace(/&amp;/g, '&'),
+          type: 'video',
+          filename: `instagram_video_${shortcode}.mp4`,
+        }];
+      }
+
+      const ogImageMatch = html.match(/<meta\s+(?:property="og:image"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:image")/i);
+      if (ogImageMatch) {
+        console.log('✓ Found og:image in direct page via', path);
+        return [{
+          url: (ogImageMatch[1] || ogImageMatch[2]).replace(/&amp;/g, '&'),
+          type: 'image',
+          filename: `instagram_image_${shortcode}.jpg`,
+        }];
+      }
+    } catch (e) {
+      console.log('Direct page error for path', path, e);
     }
-
-    // additionalData
-    const additionalDataMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]+,\s*({.+?})\s*\)\s*;/s);
-    if (additionalDataMatch) {
-      try {
-        const data = JSON.parse(additionalDataMatch[1]);
-        const media = data?.graphql?.shortcode_media || data?.items?.[0];
-        if (media) return extractFromGraphQLMedia(media);
-      } catch (_e) { /* ignore */ }
-    }
-
-    // video_url directly in source
-    const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
-    if (videoUrlMatch) {
-      return [{
-        url: videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'),
-        type: 'video',
-        filename: `instagram_video_${shortcode}.mp4`,
-      }];
-    }
-
-    // og:video
-    const ogVideoMatch = html.match(/<meta\s+(?:property="og:video"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:video")/i);
-    if (ogVideoMatch) {
-      return [{
-        url: (ogVideoMatch[1] || ogVideoMatch[2]).replace(/&amp;/g, '&'),
-        type: 'video',
-        filename: `instagram_video_${shortcode}.mp4`,
-      }];
-    }
-
-    // og:image
-    const ogImageMatch = html.match(/<meta\s+(?:property="og:image"\s+content="([^"]+)"|content="([^"]+)"\s+property="og:image")/i);
-    if (ogImageMatch) {
-      return [{
-        url: (ogImageMatch[1] || ogImageMatch[2]).replace(/&amp;/g, '&'),
-        type: 'image',
-        filename: `instagram_image_${shortcode}.jpg`,
-      }];
-    }
-  } catch (e) {
-    console.log('Direct page error:', e);
   }
 
   return [];
@@ -297,21 +332,22 @@ Deno.serve(async (req) => {
     }
 
     const expectedType = detectContentType(url);
-    console.log('Shortcode:', shortcode, '| Expected:', expectedType);
+    const resourceType = detectResourceType(url);
+    console.log('Shortcode:', shortcode, '| Expected:', expectedType, '| Resource:', resourceType);
 
     let items: MediaItem[] = [];
 
     // Strategy 1: GraphQL POST (most reliable)
-    items = await fetchViaGraphQLPost(shortcode);
+    items = await fetchViaGraphQLPost(shortcode, resourceType);
 
     // Strategy 2: Embed page
     if (items.length === 0) {
-      items = await fetchViaEmbed(shortcode);
+      items = await fetchViaEmbed(shortcode, resourceType);
     }
 
     // Strategy 3: Direct page
     if (items.length === 0) {
-      items = await fetchViaDirectPage(shortcode);
+      items = await fetchViaDirectPage(shortcode, resourceType);
     }
 
     // If we expected video but only got images, flag it
