@@ -409,6 +409,82 @@ async function fetchViaHtml(shortcode: string, resourceType: string): Promise<Me
   return [];
 }
 
+// Strategy 0: RapidAPI Instagram Downloader
+async function fetchViaRapidAPI(instagramUrl: string): Promise<MediaItem[]> {
+  const apiKey = Deno.env.get('RAPIDAPI_KEY');
+  const apiHost = Deno.env.get('RAPIDAPI_HOST');
+  
+  if (!apiKey || !apiHost) {
+    console.log('RapidAPI: keys not configured, skipping');
+    return [];
+  }
+
+  console.log('Strategy 0: RapidAPI...');
+
+  try {
+    const encodedUrl = encodeURIComponent(instagramUrl);
+    const response = await fetch(`https://${apiHost}/media?url=${encodedUrl}`, {
+      method: 'GET',
+      headers: {
+        'X-RapidAPI-Key': apiKey,
+        'X-RapidAPI-Host': apiHost,
+      },
+    });
+
+    console.log('RapidAPI status:', response.status);
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.log('RapidAPI error body:', text.substring(0, 500));
+      return [];
+    }
+
+    const data = await response.json();
+    console.log('RapidAPI response keys:', Object.keys(data));
+
+    const items: MediaItem[] = [];
+
+    // Handle different response formats from various RapidAPI Instagram APIs
+    if (data.media && Array.isArray(data.media)) {
+      for (const m of data.media) {
+        if (m.type === 'video' || m.video_url) {
+          items.push({ url: m.video_url || m.url, type: 'video', thumbnail: m.thumbnail || m.image_url, filename: `instagram_video_${Date.now()}_${items.length}.mp4` });
+        } else {
+          items.push({ url: m.image_url || m.url, type: 'image', filename: `instagram_image_${Date.now()}_${items.length}.jpg` });
+        }
+      }
+    } else if (data.result && Array.isArray(data.result)) {
+      for (const r of data.result) {
+        const isVideo = r.type === 'video' || r.url?.includes('.mp4');
+        items.push({ url: r.url || r.download_url, type: isVideo ? 'video' : 'image', thumbnail: r.thumbnail, filename: isVideo ? `instagram_video_${Date.now()}_${items.length}.mp4` : `instagram_image_${Date.now()}_${items.length}.jpg` });
+      }
+    } else if (data.video_url || data.image_url) {
+      if (data.video_url) {
+        items.push({ url: data.video_url, type: 'video', thumbnail: data.thumbnail_url || data.image_url, filename: `instagram_video_${Date.now()}.mp4` });
+      } else {
+        items.push({ url: data.image_url, type: 'image', filename: `instagram_image_${Date.now()}.jpg` });
+      }
+    } else if (data.url) {
+      const isVideo = data.type === 'video' || data.is_video || data.url?.includes('.mp4');
+      items.push({ url: data.url, type: isVideo ? 'video' : 'image', filename: isVideo ? `instagram_video_${Date.now()}.mp4` : `instagram_image_${Date.now()}.jpg` });
+    } else if (data.download_url) {
+      const isVideo = data.type === 'video' || data.download_url?.includes('.mp4');
+      items.push({ url: data.download_url, type: isVideo ? 'video' : 'image', filename: isVideo ? `instagram_video_${Date.now()}.mp4` : `instagram_image_${Date.now()}.jpg` });
+    }
+
+    if (items.length) {
+      console.log('✓ RapidAPI success:', items.map(i => `${i.type}:${i.url.substring(0, 80)}`));
+    } else {
+      console.log('RapidAPI: could not parse response, full data:', JSON.stringify(data).substring(0, 1000));
+    }
+
+    return items;
+  } catch (e) {
+    console.log('RapidAPI error:', e);
+    return [];
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -439,7 +515,11 @@ Deno.serve(async (req) => {
 
     let items: MediaItem[] = [];
 
-    items = await fetchViaFullGraphQL(shortcode);
+    // Try RapidAPI first (most reliable)
+    items = await fetchViaRapidAPI(url);
+    
+    // Fallback to scraping strategies
+    if (!items.length) items = await fetchViaFullGraphQL(shortcode);
     if (!items.length) items = await fetchViaAlternativeDocIds(shortcode);
     if (!items.length) items = await fetchViaPublicApi(shortcode, resourceType);
     if (!items.length) items = await fetchViaEmbed(shortcode, resourceType);
