@@ -15,17 +15,6 @@ function extractShortcode(url: string): string | null {
   return match ? match[1] : null;
 }
 
-function shortcodeToMediaId(shortcode: string): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  let id = BigInt(0);
-  for (const char of shortcode) {
-    const idx = alphabet.indexOf(char);
-    if (idx === -1) continue;
-    id = id * BigInt(64) + BigInt(idx);
-  }
-  return id.toString();
-}
-
 function detectResourceType(url: string): string {
   if (/\/reel\//i.test(url) || /\/reels\//i.test(url)) return 'reel';
   if (/\/tv\//i.test(url)) return 'tv';
@@ -33,56 +22,10 @@ function detectResourceType(url: string): string {
   return 'p';
 }
 
-function extractFromApiMedia(item: any): MediaItem[] {
-  const items: MediaItem[] = [];
-  
-  if (item.carousel_media) {
-    for (const cm of item.carousel_media) {
-      if (cm.video_versions?.length) {
-        items.push({
-          url: cm.video_versions[0].url,
-          type: 'video',
-          thumbnail: cm.image_versions2?.candidates?.[0]?.url,
-          filename: `instagram_video_${cm.pk || Date.now()}.mp4`,
-        });
-      } else if (cm.image_versions2?.candidates?.length) {
-        items.push({
-          url: cm.image_versions2.candidates[0].url,
-          type: 'image',
-          thumbnail: cm.image_versions2.candidates[0].url,
-          filename: `instagram_image_${cm.pk || Date.now()}.jpg`,
-        });
-      }
-    }
-    return items;
-  }
-
-  if (item.video_versions?.length) {
-    items.push({
-      url: item.video_versions[0].url,
-      type: 'video',
-      thumbnail: item.image_versions2?.candidates?.[0]?.url,
-      filename: `instagram_video_${item.pk || Date.now()}.mp4`,
-    });
-    return items;
-  }
-
-  if (item.image_versions2?.candidates?.length) {
-    items.push({
-      url: item.image_versions2.candidates[0].url,
-      type: 'image',
-      thumbnail: item.image_versions2.candidates[0].url,
-      filename: `instagram_image_${item.pk || Date.now()}.jpg`,
-    });
-    return items;
-  }
-
-  return items;
-}
-
 function extractFromGraphQLMedia(media: any): MediaItem[] {
   const items: MediaItem[] = [];
 
+  // Carousel
   if (media.edge_sidecar_to_children?.edges) {
     for (const edge of media.edge_sidecar_to_children.edges) {
       const node = edge.node;
@@ -122,51 +65,152 @@ function extractFromGraphQLMedia(media: any): MediaItem[] {
   return items;
 }
 
-// Get fresh CSRF token and cookies from Instagram
-async function getInstagramSession(): Promise<{ csrfToken: string; cookies: string }> {
-  try {
-    const response = await fetch('https://www.instagram.com/web/__mid/', {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-      },
+function extractFromApiMedia(item: any): MediaItem[] {
+  const items: MediaItem[] = [];
+  
+  if (item.carousel_media) {
+    for (const cm of item.carousel_media) {
+      if (cm.video_versions?.length) {
+        items.push({
+          url: cm.video_versions[0].url,
+          type: 'video',
+          thumbnail: cm.image_versions2?.candidates?.[0]?.url,
+          filename: `instagram_video_${cm.pk || Date.now()}.mp4`,
+        });
+      } else if (cm.image_versions2?.candidates?.length) {
+        items.push({
+          url: cm.image_versions2.candidates[0].url,
+          type: 'image',
+          filename: `instagram_image_${cm.pk || Date.now()}.jpg`,
+        });
+      }
+    }
+    return items;
+  }
+
+  if (item.video_versions?.length) {
+    items.push({
+      url: item.video_versions[0].url,
+      type: 'video',
+      thumbnail: item.image_versions2?.candidates?.[0]?.url,
+      filename: `instagram_video_${item.pk || Date.now()}.mp4`,
     });
-    
-    const setCookies = response.headers.get('set-cookie') || '';
-    const csrfMatch = setCookies.match(/csrftoken=([^;]+)/);
-    const midMatch = setCookies.match(/mid=([^;]+)/);
-    
-    const csrfToken = csrfMatch?.[1] || 'missing';
-    const cookies = [
-      csrfMatch ? `csrftoken=${csrfMatch[1]}` : '',
-      midMatch ? `mid=${midMatch[1]}` : '',
-      'ig_did=00000000-0000-0000-0000-000000000000',
-      'ig_nrcb=1',
-    ].filter(Boolean).join('; ');
-    
-    console.log('Session obtained, csrf:', csrfToken.substring(0, 10) + '...');
-    return { csrfToken, cookies };
-  } catch (e) {
-    console.log('Session fetch failed:', e);
-    return { csrfToken: 'missing', cookies: '' };
+    return items;
+  }
+
+  if (item.image_versions2?.candidates?.length) {
+    items.push({
+      url: item.image_versions2.candidates[0].url,
+      type: 'image',
+      filename: `instagram_image_${item.pk || Date.now()}.jpg`,
+    });
+  }
+
+  return items;
+}
+
+// Try to parse response regardless of content-type
+async function parseJsonResponse(response: Response): Promise<any | null> {
+  try {
+    const text = await response.text();
+    if (!text || text.length < 2) return null;
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 
-// Strategy 1: GraphQL API with doc_id 24368985919464652 (newest, works for reels)
-async function fetchViaGraphQLNew(shortcode: string, session: { csrfToken: string; cookies: string }): Promise<MediaItem[]> {
-  console.log('Strategy 1: GraphQL API (new doc_id)...');
-
-  const variables = JSON.stringify({ shortcode });
+// Extract media from any GraphQL response structure
+function extractFromAnyGraphQL(data: any): MediaItem[] {
+  if (!data?.data) return [];
   
+  // Try all known response paths
+  const media = data.data.xdt_shortcode_media 
+    || data.data.shortcode_media;
+  
+  if (media) return extractFromGraphQLMedia(media);
+
+  // xdt_api__v1__media__shortcode__web_info structure
+  const webInfo = data.data.xdt_api__v1__media__shortcode__web_info;
+  if (webInfo?.items?.length) {
+    return extractFromApiMedia(webInfo.items[0]);
+  }
+
+  return [];
+}
+
+// Strategy 1: Minimal GraphQL POST (proven working, doc_id 8845758582119845)
+async function fetchViaGraphQLMinimal(shortcode: string): Promise<MediaItem[]> {
+  console.log('Strategy 1: Minimal GraphQL POST...');
+
+  const body = `variables=${encodeURIComponent(JSON.stringify({ shortcode }))}&doc_id=8845758582119845`;
+
   try {
-    const graphqlUrl = new URL('https://www.instagram.com/api/graphql');
-    
-    const body = new URLSearchParams({
-      variables,
-      doc_id: '24368985919464652',
-      lsd: session.csrfToken,
+    const response = await fetch('https://www.instagram.com/graphql/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      },
+      body,
     });
 
+    console.log('Minimal GraphQL status:', response.status);
+    if (!response.ok) return [];
+
+    const data = await parseJsonResponse(response);
+    if (!data) return [];
+    
+    const items = extractFromAnyGraphQL(data);
+    if (items.length) console.log('✓ Minimal GraphQL success');
+    return items;
+  } catch (e) {
+    console.log('Minimal GraphQL error:', e);
+  }
+  return [];
+}
+
+// Strategy 2: GraphQL with doc_id for reels (25981206651899035)  
+async function fetchViaGraphQLReels(shortcode: string): Promise<MediaItem[]> {
+  console.log('Strategy 2: Reels GraphQL (doc_id 25981206651899035)...');
+
+  const body = `variables=${encodeURIComponent(JSON.stringify({ shortcode }))}&doc_id=25981206651899035`;
+
+  try {
+    const response = await fetch('https://www.instagram.com/graphql/query', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+      },
+      body,
+    });
+
+    console.log('Reels GraphQL status:', response.status);
+    if (!response.ok) return [];
+
+    const data = await parseJsonResponse(response);
+    if (!data) return [];
+
+    const items = extractFromAnyGraphQL(data);
+    if (items.length) console.log('✓ Reels GraphQL success');
+    return items;
+  } catch (e) {
+    console.log('Reels GraphQL error:', e);
+  }
+  return [];
+}
+
+// Strategy 3: /api/graphql endpoint with GET params (doc_id 10015901848480474)
+async function fetchViaApiGraphQL(shortcode: string): Promise<MediaItem[]> {
+  console.log('Strategy 3: API GraphQL (doc_id 10015901848480474)...');
+
+  const graphqlUrl = new URL('https://www.instagram.com/api/graphql');
+  graphqlUrl.searchParams.set('variables', JSON.stringify({ shortcode }));
+  graphqlUrl.searchParams.set('doc_id', '10015901848480474');
+  graphqlUrl.searchParams.set('lsd', 'AVqbxe3J_YA');
+
+  try {
     const response = await fetch(graphqlUrl.toString(), {
       method: 'POST',
       headers: {
@@ -174,153 +218,71 @@ async function fetchViaGraphQLNew(shortcode: string, session: { csrfToken: strin
         'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.9',
         'Content-Type': 'application/x-www-form-urlencoded',
-        'X-CSRFToken': session.csrfToken,
+        'X-FB-LSD': 'AVqbxe3J_YA',
         'X-IG-App-ID': '936619743392459',
-        'X-FB-LSD': session.csrfToken,
         'X-ASBD-ID': '129477',
+        'Sec-Fetch-Site': 'same-origin',
         'Origin': 'https://www.instagram.com',
         'Referer': 'https://www.instagram.com/',
-        'Cookie': session.cookies,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
       },
-      body: body.toString(),
     });
 
-    console.log('GraphQL new status:', response.status);
+    console.log('API GraphQL status:', response.status);
     if (!response.ok) return [];
 
-    const ct = response.headers.get('content-type') || '';
-    if (!ct.includes('json')) {
-      const text = await response.text();
-      console.log('GraphQL new non-JSON:', text.substring(0, 200));
-      return [];
-    }
+    const data = await parseJsonResponse(response);
+    if (!data) return [];
 
-    const data = await response.json();
-    const media = data?.data?.xdt_shortcode_media || data?.data?.shortcode_media;
-    if (media) {
-      console.log('✓ GraphQL new success, is_video:', media.is_video, 'typename:', media.__typename);
-      return extractFromGraphQLMedia(media);
-    }
-
-    console.log('GraphQL new: no media. Response keys:', JSON.stringify(Object.keys(data?.data || {})).substring(0, 200));
+    const items = extractFromAnyGraphQL(data);
+    if (items.length) console.log('✓ API GraphQL success');
+    return items;
   } catch (e) {
-    console.log('GraphQL new error:', e);
+    console.log('API GraphQL error:', e);
   }
   return [];
 }
 
-// Strategy 2: GraphQL with older doc_id 8845758582119845
-async function fetchViaGraphQLOld(shortcode: string, session: { csrfToken: string; cookies: string }): Promise<MediaItem[]> {
-  console.log('Strategy 2: GraphQL (old doc_id)...');
+// Strategy 4: GraphQL with full headers and doc_id 24368985919464652
+async function fetchViaGraphQLFull(shortcode: string): Promise<MediaItem[]> {
+  console.log('Strategy 4: Full GraphQL (doc_id 24368985919464652)...');
 
   const body = new URLSearchParams({
-    av: '0',
-    __d: 'www',
-    __user: '0',
-    __a: '1',
-    __req: 'k',
-    __hs: '20244.HYP:instagram_web_pkg.2.1..0.0',
-    dpr: '1',
-    __ccg: 'EXCELLENT',
-    __rev: '1020026498',
-    __comet_req: '7',
-    lsd: session.csrfToken,
-    jazoest: '2946',
-    __spin_r: '1020026498',
-    __spin_b: 'trunk',
-    __spin_t: String(Math.floor(Date.now() / 1000)),
-    fb_api_caller_class: 'RelayModern',
-    fb_api_req_friendly_name: 'PolarisPostActionLoadPostQueryQuery',
-    variables: JSON.stringify({
-      shortcode,
-      fetch_tagged_user_count: null,
-      hoisted_comment_id: null,
-      hoisted_reply_id: null,
-    }),
-    server_timestamps: 'true',
-    doc_id: '8845758582119845',
+    variables: JSON.stringify({ shortcode }),
+    doc_id: '24368985919464652',
   });
 
   try {
     const response = await fetch('https://www.instagram.com/graphql/query', {
       method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.5',
         'Content-Type': 'application/x-www-form-urlencoded',
-        'X-FB-Friendly-Name': 'PolarisPostActionLoadPostQueryQuery',
-        'X-CSRFToken': session.csrfToken,
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'X-IG-App-ID': '936619743392459',
-        'X-FB-LSD': session.csrfToken,
-        'X-ASBD-ID': '129477',
         'Origin': 'https://www.instagram.com',
         'Referer': 'https://www.instagram.com/',
-        'Cookie': session.cookies,
-        'Sec-Fetch-Dest': 'empty',
-        'Sec-Fetch-Mode': 'cors',
-        'Sec-Fetch-Site': 'same-origin',
       },
       body: body.toString(),
     });
 
-    console.log('GraphQL old status:', response.status);
+    console.log('Full GraphQL status:', response.status);
     if (!response.ok) return [];
 
-    const ct = response.headers.get('content-type') || '';
-    if (!ct.includes('json')) return [];
+    const data = await parseJsonResponse(response);
+    if (!data) return [];
 
-    const data = await response.json();
-    const media = data?.data?.xdt_shortcode_media || data?.data?.shortcode_media;
-    if (media) {
-      console.log('✓ GraphQL old success, is_video:', media.is_video);
-      return extractFromGraphQLMedia(media);
-    }
+    const items = extractFromAnyGraphQL(data);
+    if (items.length) console.log('✓ Full GraphQL success');
+    else console.log('Full GraphQL no media. Keys:', JSON.stringify(Object.keys(data?.data || {})));
+    return items;
   } catch (e) {
-    console.log('GraphQL old error:', e);
+    console.log('Full GraphQL error:', e);
   }
   return [];
 }
 
-// Strategy 3: Mobile API (i.instagram.com)
-async function fetchViaMobileApi(shortcode: string): Promise<MediaItem[]> {
-  const mediaId = shortcodeToMediaId(shortcode);
-  console.log('Strategy 3: Mobile API, mediaId:', mediaId);
-
-  try {
-    const response = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
-      headers: {
-        'User-Agent': 'Instagram 317.0.0.34.109 Android (33/13; 420dpi; 1080x2340; samsung; SM-S908B; b0q; qcom; en_US; 562940465)',
-        'X-IG-App-ID': '936619743392459',
-        'X-IG-WWW-Claim': '0',
-        'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-      },
-    });
-
-    console.log('Mobile API status:', response.status);
-    if (!response.ok) return [];
-
-    const ct = response.headers.get('content-type') || '';
-    if (!ct.includes('json')) return [];
-
-    const data = await response.json();
-    if (data.items?.length) {
-      console.log('✓ Mobile API success');
-      return extractFromApiMedia(data.items[0]);
-    }
-  } catch (e) {
-    console.log('Mobile API error:', e);
-  }
-  return [];
-}
-
-// Strategy 4: Embed page scraping
+// Strategy 5: Embed page scraping
 async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<MediaItem[]> {
-  console.log('Strategy 4: Embed page...');
+  console.log('Strategy 5: Embed page...');
   
   const paths = resourceType === 'reel'
     ? [`reel/${shortcode}`, `p/${shortcode}`]
@@ -331,7 +293,7 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
       const response = await fetch(`https://www.instagram.com/${path}/embed/captioned/`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept': 'text/html,application/xhtml+xml',
           'Accept-Language': 'en-US,en;q=0.9',
         },
         redirect: 'follow',
@@ -340,7 +302,6 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
       if (!response.ok) continue;
       const html = await response.text();
 
-      // Try to extract video_url
       const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
       if (videoUrlMatch) {
         const videoUrl = videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
@@ -355,7 +316,6 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
         }];
       }
 
-      // Try og:video
       const ogVideoMatch = html.match(/<meta[^>]+property="og:video"[^>]+content="([^"]+)"/i);
       if (ogVideoMatch) {
         console.log('✓ Found og:video in embed');
@@ -366,7 +326,6 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
         }];
       }
 
-      // Extract image
       const displayUrlMatch = html.match(/"display_url"\s*:\s*"([^"]+)"/);
       if (displayUrlMatch) {
         console.log('✓ Found display_url in embed');
@@ -387,7 +346,6 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
         }];
       }
 
-      // EmbeddedMediaImage class
       const imgSrcMatch = html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/);
       if (imgSrcMatch) {
         console.log('✓ Found EmbeddedMediaImage');
@@ -404,9 +362,9 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
   return [];
 }
 
-// Strategy 5: HTML page scraping with script tag extraction
+// Strategy 6: Direct HTML page scraping
 async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Promise<MediaItem[]> {
-  console.log('Strategy 5: HTML scrape...');
+  console.log('Strategy 6: HTML scrape...');
   
   const path = resourceType === 'reel' ? `reel/${shortcode}` : `p/${shortcode}`;
   
@@ -414,11 +372,10 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
     const response = await fetch(`https://www.instagram.com/${path}/`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'en-US,en;q=0.9',
         'Sec-Fetch-Dest': 'document',
         'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
       },
       redirect: 'follow',
     });
@@ -426,7 +383,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
     if (!response.ok) return [];
     const html = await response.text();
 
-    // Try _sharedData
+    // _sharedData
     const sharedDataMatch = html.match(/window\._sharedData\s*=\s*({.+?});\s*<\/script>/s);
     if (sharedDataMatch) {
       try {
@@ -439,7 +396,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
       } catch (_e) { /* ignore */ }
     }
 
-    // Try __additionalDataLoaded
+    // __additionalDataLoaded
     const additionalMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]+,\s*({.+?})\s*\)\s*;/s);
     if (additionalMatch) {
       try {
@@ -453,7 +410,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
       } catch (_e) { /* ignore */ }
     }
 
-    // video_url in any script tag
+    // video_url in scripts
     const videoMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
     if (videoMatch) {
       console.log('✓ Found video_url in HTML');
@@ -475,7 +432,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
       }];
     }
 
-    // og:image
+    // og:image as last resort
     const ogImage = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i);
     if (ogImage) {
       console.log('✓ Found og:image in HTML');
@@ -519,33 +476,16 @@ Deno.serve(async (req) => {
     const resourceType = detectResourceType(url);
     console.log('Shortcode:', shortcode, '| Type:', resourceType);
 
-    // Get fresh session tokens
-    const session = await getInstagramSession();
-
     let items: MediaItem[] = [];
 
-    // Strategy 1: New GraphQL API (best for reels)
-    items = await fetchViaGraphQLNew(shortcode, session);
+    // Try all strategies in order
+    items = await fetchViaGraphQLMinimal(shortcode);
 
-    // Strategy 2: Old GraphQL
-    if (!items.length) {
-      items = await fetchViaGraphQLOld(shortcode, session);
-    }
-
-    // Strategy 3: Mobile API
-    if (!items.length) {
-      items = await fetchViaMobileApi(shortcode);
-    }
-
-    // Strategy 4: Embed page
-    if (!items.length) {
-      items = await fetchViaEmbed(shortcode, resourceType);
-    }
-
-    // Strategy 5: HTML scraping
-    if (!items.length) {
-      items = await fetchViaHtmlScrape(shortcode, resourceType);
-    }
+    if (!items.length) items = await fetchViaGraphQLReels(shortcode);
+    if (!items.length) items = await fetchViaApiGraphQL(shortcode);
+    if (!items.length) items = await fetchViaGraphQLFull(shortcode);
+    if (!items.length) items = await fetchViaEmbed(shortcode, resourceType);
+    if (!items.length) items = await fetchViaHtmlScrape(shortcode, resourceType);
 
     // Filter valid URLs
     items = items.filter(i => i.url && i.url.startsWith('http'));
