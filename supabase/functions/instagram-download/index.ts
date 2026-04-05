@@ -10,16 +10,6 @@ interface MediaItem {
   filename: string;
 }
 
-const USER_AGENTS = [
-  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
-  'Mozilla/5.0 (Linux; Android 13; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.43 Mobile Safari/537.36',
-  'Instagram 317.0.0.34.109 Android (33/13; 420dpi; 1080x2340; samsung; SM-S908B; b0q; qcom; en_US; 562940465)',
-];
-
-function randomUA(): string {
-  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
-}
-
 function extractShortcode(url: string): string | null {
   const match = url.match(/instagram\.com\/(?:p|reel|reels|tv|stories\/[^/]+)\/([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
@@ -46,7 +36,6 @@ function detectResourceType(url: string): string {
 function extractFromApiMedia(item: any): MediaItem[] {
   const items: MediaItem[] = [];
   
-  // Carousel
   if (item.carousel_media) {
     for (const cm of item.carousel_media) {
       if (cm.video_versions?.length) {
@@ -68,7 +57,6 @@ function extractFromApiMedia(item: any): MediaItem[] {
     return items;
   }
 
-  // Single video
   if (item.video_versions?.length) {
     items.push({
       url: item.video_versions[0].url,
@@ -79,7 +67,6 @@ function extractFromApiMedia(item: any): MediaItem[] {
     return items;
   }
 
-  // Single image
   if (item.image_versions2?.candidates?.length) {
     items.push({
       url: item.image_versions2.candidates[0].url,
@@ -96,7 +83,6 @@ function extractFromApiMedia(item: any): MediaItem[] {
 function extractFromGraphQLMedia(media: any): MediaItem[] {
   const items: MediaItem[] = [];
 
-  // Carousel / sidecar
   if (media.edge_sidecar_to_children?.edges) {
     for (const edge of media.edge_sidecar_to_children.edges) {
       const node = edge.node;
@@ -136,55 +122,99 @@ function extractFromGraphQLMedia(media: any): MediaItem[] {
   return items;
 }
 
-// Strategy 1: Instagram Mobile API (i.instagram.com)
-async function fetchViaMobileApi(shortcode: string): Promise<MediaItem[]> {
-  const mediaId = shortcodeToMediaId(shortcode);
-  console.log('Strategy 1: Mobile API, mediaId:', mediaId);
-
+// Get fresh CSRF token and cookies from Instagram
+async function getInstagramSession(): Promise<{ csrfToken: string; cookies: string }> {
   try {
-    const response = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+    const response = await fetch('https://www.instagram.com/web/__mid/', {
       headers: {
-        'User-Agent': 'Instagram 317.0.0.34.109 Android (33/13; 420dpi; 1080x2340; samsung; SM-S908B; b0q; qcom; en_US; 562940465)',
-        'X-IG-App-ID': '936619743392459',
-        'X-IG-WWW-Claim': '0',
-        'X-Requested-With': 'XMLHttpRequest',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Origin': 'https://www.instagram.com',
-        'Referer': 'https://www.instagram.com/',
       },
     });
+    
+    const setCookies = response.headers.get('set-cookie') || '';
+    const csrfMatch = setCookies.match(/csrftoken=([^;]+)/);
+    const midMatch = setCookies.match(/mid=([^;]+)/);
+    
+    const csrfToken = csrfMatch?.[1] || 'missing';
+    const cookies = [
+      csrfMatch ? `csrftoken=${csrfMatch[1]}` : '',
+      midMatch ? `mid=${midMatch[1]}` : '',
+      'ig_did=00000000-0000-0000-0000-000000000000',
+      'ig_nrcb=1',
+    ].filter(Boolean).join('; ');
+    
+    console.log('Session obtained, csrf:', csrfToken.substring(0, 10) + '...');
+    return { csrfToken, cookies };
+  } catch (e) {
+    console.log('Session fetch failed:', e);
+    return { csrfToken: 'missing', cookies: '' };
+  }
+}
 
-    console.log('Mobile API status:', response.status);
+// Strategy 1: GraphQL API with doc_id 24368985919464652 (newest, works for reels)
+async function fetchViaGraphQLNew(shortcode: string, session: { csrfToken: string; cookies: string }): Promise<MediaItem[]> {
+  console.log('Strategy 1: GraphQL API (new doc_id)...');
+
+  const variables = JSON.stringify({ shortcode });
+  
+  try {
+    const graphqlUrl = new URL('https://www.instagram.com/api/graphql');
+    
+    const body = new URLSearchParams({
+      variables,
+      doc_id: '24368985919464652',
+      lsd: session.csrfToken,
+    });
+
+    const response = await fetch(graphqlUrl.toString(), {
+      method: 'POST',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'X-CSRFToken': session.csrfToken,
+        'X-IG-App-ID': '936619743392459',
+        'X-FB-LSD': session.csrfToken,
+        'X-ASBD-ID': '129477',
+        'Origin': 'https://www.instagram.com',
+        'Referer': 'https://www.instagram.com/',
+        'Cookie': session.cookies,
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+      },
+      body: body.toString(),
+    });
+
+    console.log('GraphQL new status:', response.status);
     if (!response.ok) return [];
 
     const ct = response.headers.get('content-type') || '';
     if (!ct.includes('json')) {
-      console.log('Mobile API returned non-JSON');
+      const text = await response.text();
+      console.log('GraphQL new non-JSON:', text.substring(0, 200));
       return [];
     }
 
     const data = await response.json();
-    if (data.items?.length) {
-      console.log('✓ Mobile API success, items:', data.items.length);
-      return extractFromApiMedia(data.items[0]);
+    const media = data?.data?.xdt_shortcode_media || data?.data?.shortcode_media;
+    if (media) {
+      console.log('✓ GraphQL new success, is_video:', media.is_video, 'typename:', media.__typename);
+      return extractFromGraphQLMedia(media);
     }
+
+    console.log('GraphQL new: no media. Response keys:', JSON.stringify(Object.keys(data?.data || {})).substring(0, 200));
   } catch (e) {
-    console.log('Mobile API error:', e);
+    console.log('GraphQL new error:', e);
   }
   return [];
 }
 
-// Strategy 2: GraphQL query with doc_id
-async function fetchViaGraphQL(shortcode: string, resourceType: string): Promise<MediaItem[]> {
-  console.log('Strategy 2: GraphQL query...');
-
-  const variables = JSON.stringify({
-    shortcode,
-    fetch_tagged_user_count: null,
-    hoisted_comment_id: null,
-    hoisted_reply_id: null,
-  });
+// Strategy 2: GraphQL with older doc_id 8845758582119845
+async function fetchViaGraphQLOld(shortcode: string, session: { csrfToken: string; cookies: string }): Promise<MediaItem[]> {
+  console.log('Strategy 2: GraphQL (old doc_id)...');
 
   const body = new URLSearchParams({
     av: '0',
@@ -196,19 +226,20 @@ async function fetchViaGraphQL(shortcode: string, resourceType: string): Promise
     dpr: '1',
     __ccg: 'EXCELLENT',
     __rev: '1020026498',
-    __s: '',
-    __hsi: '7489787314313612244',
-    __dyn: '',
-    __csr: '',
     __comet_req: '7',
-    lsd: 'AVrqPT0gJDo',
+    lsd: session.csrfToken,
     jazoest: '2946',
     __spin_r: '1020026498',
     __spin_b: 'trunk',
     __spin_t: String(Math.floor(Date.now() / 1000)),
     fb_api_caller_class: 'RelayModern',
     fb_api_req_friendly_name: 'PolarisPostActionLoadPostQueryQuery',
-    variables,
+    variables: JSON.stringify({
+      shortcode,
+      fetch_tagged_user_count: null,
+      hoisted_comment_id: null,
+      hoisted_reply_id: null,
+    }),
     server_timestamps: 'true',
     doc_id: '8845758582119845',
   });
@@ -217,103 +248,77 @@ async function fetchViaGraphQL(shortcode: string, resourceType: string): Promise
     const response = await fetch('https://www.instagram.com/graphql/query', {
       method: 'POST',
       headers: {
-        'User-Agent': randomUA(),
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept': '*/*',
         'Accept-Language': 'en-US,en;q=0.5',
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-FB-Friendly-Name': 'PolarisPostActionLoadPostQueryQuery',
-        'X-CSRFToken': 'RVDUooU5MYsBbS1CNN3CzVAuEP8oHB52',
+        'X-CSRFToken': session.csrfToken,
         'X-IG-App-ID': '936619743392459',
-        'X-FB-LSD': 'AVrqPT0gJDo',
+        'X-FB-LSD': session.csrfToken,
         'X-ASBD-ID': '129477',
+        'Origin': 'https://www.instagram.com',
+        'Referer': 'https://www.instagram.com/',
+        'Cookie': session.cookies,
         'Sec-Fetch-Dest': 'empty',
         'Sec-Fetch-Mode': 'cors',
         'Sec-Fetch-Site': 'same-origin',
-        'Referer': `https://www.instagram.com/`,
       },
       body: body.toString(),
     });
 
-    console.log('GraphQL status:', response.status);
+    console.log('GraphQL old status:', response.status);
     if (!response.ok) return [];
 
     const ct = response.headers.get('content-type') || '';
-    if (!ct.includes('json')) {
-      console.log('GraphQL returned non-JSON');
-      return [];
-    }
+    if (!ct.includes('json')) return [];
 
     const data = await response.json();
-    
     const media = data?.data?.xdt_shortcode_media || data?.data?.shortcode_media;
     if (media) {
-      console.log('✓ GraphQL success, is_video:', media.is_video, 'has_sidecar:', !!media.edge_sidecar_to_children);
+      console.log('✓ GraphQL old success, is_video:', media.is_video);
       return extractFromGraphQLMedia(media);
     }
-
-    console.log('GraphQL: no media. Keys:', Object.keys(data?.data || {}));
   } catch (e) {
-    console.log('GraphQL error:', e);
+    console.log('GraphQL old error:', e);
   }
   return [];
 }
 
-// Strategy 3: Web Profile API (?__a=1&__d=dis)
-async function fetchViaWebApi(shortcode: string, resourceType: string): Promise<MediaItem[]> {
-  console.log('Strategy 3: Web API (?__a=1&__d=dis)...');
-  
-  const paths = resourceType === 'reel' 
-    ? [`reel/${shortcode}`, `p/${shortcode}`]
-    : resourceType === 'tv'
-      ? [`tv/${shortcode}`, `p/${shortcode}`]
-      : [`p/${shortcode}`];
+// Strategy 3: Mobile API (i.instagram.com)
+async function fetchViaMobileApi(shortcode: string): Promise<MediaItem[]> {
+  const mediaId = shortcodeToMediaId(shortcode);
+  console.log('Strategy 3: Mobile API, mediaId:', mediaId);
 
-  for (const path of paths) {
-    try {
-      const response = await fetch(`https://www.instagram.com/${path}/?__a=1&__d=dis`, {
-        headers: {
-          'User-Agent': randomUA(),
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'X-IG-App-ID': '936619743392459',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Referer': 'https://www.instagram.com/',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin',
-        },
-      });
+  try {
+    const response = await fetch(`https://i.instagram.com/api/v1/media/${mediaId}/info/`, {
+      headers: {
+        'User-Agent': 'Instagram 317.0.0.34.109 Android (33/13; 420dpi; 1080x2340; samsung; SM-S908B; b0q; qcom; en_US; 562940465)',
+        'X-IG-App-ID': '936619743392459',
+        'X-IG-WWW-Claim': '0',
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
 
-      console.log('Web API status for', path, ':', response.status);
-      if (!response.ok) continue;
+    console.log('Mobile API status:', response.status);
+    if (!response.ok) return [];
 
-      const ct = response.headers.get('content-type') || '';
-      if (!ct.includes('json')) continue;
+    const ct = response.headers.get('content-type') || '';
+    if (!ct.includes('json')) return [];
 
-      const data = await response.json();
-      
-      // Try multiple response structures
-      const media = data?.graphql?.shortcode_media 
-        || data?.items?.[0] 
-        || data?.data?.shortcode_media;
-      
-      if (media) {
-        // items[0] uses API format, others use GraphQL format
-        if (data?.items?.[0]) {
-          console.log('✓ Web API success (items format)');
-          return extractFromApiMedia(media);
-        }
-        console.log('✓ Web API success (graphql format)');
-        return extractFromGraphQLMedia(media);
-      }
-    } catch (e) {
-      console.log('Web API error for', path, ':', e);
+    const data = await response.json();
+    if (data.items?.length) {
+      console.log('✓ Mobile API success');
+      return extractFromApiMedia(data.items[0]);
     }
+  } catch (e) {
+    console.log('Mobile API error:', e);
   }
   return [];
 }
 
-// Strategy 4: Embed page
+// Strategy 4: Embed page scraping
 async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<MediaItem[]> {
   console.log('Strategy 4: Embed page...');
   
@@ -335,15 +340,13 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
       if (!response.ok) continue;
       const html = await response.text();
 
-      // Try to find video_url in embedded data
+      // Try to extract video_url
       const videoUrlMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
       if (videoUrlMatch) {
         const videoUrl = videoUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
         console.log('✓ Found video_url in embed');
-        
         const thumbMatch = html.match(/"display_url"\s*:\s*"([^"]+)"/);
         const thumbnail = thumbMatch ? thumbMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/') : undefined;
-        
         return [{
           url: videoUrl,
           type: 'video',
@@ -353,8 +356,7 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
       }
 
       // Try og:video
-      const ogVideoMatch = html.match(/<meta[^>]+property="og:video"[^>]+content="([^"]+)"/i)
-        || html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:video"/i);
+      const ogVideoMatch = html.match(/<meta[^>]+property="og:video"[^>]+content="([^"]+)"/i);
       if (ogVideoMatch) {
         console.log('✓ Found og:video in embed');
         return [{
@@ -364,20 +366,18 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
         }];
       }
 
-      // Extract image from embed
+      // Extract image
       const displayUrlMatch = html.match(/"display_url"\s*:\s*"([^"]+)"/);
       if (displayUrlMatch) {
-        const imgUrl = displayUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/');
         console.log('✓ Found display_url in embed');
         return [{
-          url: imgUrl,
+          url: displayUrlMatch[1].replace(/\\u0026/g, '&').replace(/\\\//g, '/'),
           type: 'image',
           filename: `instagram_image_${shortcode}.jpg`,
         }];
       }
 
-      const ogImageMatch = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)
-        || html.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i);
+      const ogImageMatch = html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i);
       if (ogImageMatch) {
         console.log('✓ Found og:image in embed');
         return [{
@@ -387,10 +387,10 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
         }];
       }
 
-      // Try extracting from EmbeddedMediaImage class
+      // EmbeddedMediaImage class
       const imgSrcMatch = html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/);
       if (imgSrcMatch) {
-        console.log('✓ Found EmbeddedMediaImage in embed');
+        console.log('✓ Found EmbeddedMediaImage');
         return [{
           url: imgSrcMatch[1].replace(/&amp;/g, '&'),
           type: 'image',
@@ -404,7 +404,7 @@ async function fetchViaEmbed(shortcode: string, resourceType: string): Promise<M
   return [];
 }
 
-// Strategy 5: Direct HTML page scraping
+// Strategy 5: HTML page scraping with script tag extraction
 async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Promise<MediaItem[]> {
   console.log('Strategy 5: HTML scrape...');
   
@@ -436,7 +436,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
           console.log('✓ Found _sharedData');
           return extractFromGraphQLMedia(media);
         }
-      } catch (_e) { /* ignore parse error */ }
+      } catch (_e) { /* ignore */ }
     }
 
     // Try __additionalDataLoaded
@@ -453,7 +453,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
       } catch (_e) { /* ignore */ }
     }
 
-    // Try finding video_url directly in HTML
+    // video_url in any script tag
     const videoMatch = html.match(/"video_url"\s*:\s*"([^"]+)"/);
     if (videoMatch) {
       console.log('✓ Found video_url in HTML');
@@ -464,7 +464,7 @@ async function fetchViaHtmlScrape(shortcode: string, resourceType: string): Prom
       }];
     }
 
-    // Try og:video from HTML
+    // og:video
     const ogVideo = html.match(/<meta[^>]+property="og:video"[^>]+content="([^"]+)"/i);
     if (ogVideo) {
       console.log('✓ Found og:video in HTML');
@@ -517,21 +517,24 @@ Deno.serve(async (req) => {
     }
 
     const resourceType = detectResourceType(url);
-    console.log('Shortcode:', shortcode, '| Type:', resourceType, '| MediaId:', shortcodeToMediaId(shortcode));
+    console.log('Shortcode:', shortcode, '| Type:', resourceType);
+
+    // Get fresh session tokens
+    const session = await getInstagramSession();
 
     let items: MediaItem[] = [];
 
-    // Strategy 1: Mobile API (most reliable for all content types)
-    items = await fetchViaMobileApi(shortcode);
+    // Strategy 1: New GraphQL API (best for reels)
+    items = await fetchViaGraphQLNew(shortcode, session);
 
-    // Strategy 2: GraphQL query
+    // Strategy 2: Old GraphQL
     if (!items.length) {
-      items = await fetchViaGraphQL(shortcode, resourceType);
+      items = await fetchViaGraphQLOld(shortcode, session);
     }
 
-    // Strategy 3: Web API (?__a=1&__d=dis)
+    // Strategy 3: Mobile API
     if (!items.length) {
-      items = await fetchViaWebApi(shortcode, resourceType);
+      items = await fetchViaMobileApi(shortcode);
     }
 
     // Strategy 4: Embed page
@@ -539,27 +542,20 @@ Deno.serve(async (req) => {
       items = await fetchViaEmbed(shortcode, resourceType);
     }
 
-    // Strategy 5: Direct HTML scraping
+    // Strategy 5: HTML scraping
     if (!items.length) {
       items = await fetchViaHtmlScrape(shortcode, resourceType);
     }
+
+    // Filter valid URLs
+    items = items.filter(i => i.url && i.url.startsWith('http'));
 
     if (!items.length) {
       return new Response(
         JSON.stringify({
           success: false,
-          error: 'Não foi possível extrair a mídia deste link. O conteúdo pode ser privado, restrito por idade, ou o Instagram bloqueou o acesso temporariamente. Tente novamente em alguns minutos.',
+          error: 'Não foi possível extrair a mídia deste link. O conteúdo pode ser privado, restrito por idade, ou temporariamente indisponível. Tente novamente em alguns minutos.',
         }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Filter out items with empty/null URLs
-    items = items.filter(i => i.url && i.url.startsWith('http'));
-
-    if (!items.length) {
-      return new Response(
-        JSON.stringify({ success: false, error: 'Mídia encontrada mas as URLs não estão acessíveis. Tente novamente.' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
