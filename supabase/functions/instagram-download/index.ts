@@ -12,6 +12,11 @@ interface MediaItem {
 
 type InstagramResource = 'p' | 'reel' | 'tv';
 
+interface AccessCheckResult {
+  blocked: boolean;
+  reason?: string;
+}
+
 function extractShortcode(url: string): string | null {
   const match = url.match(/instagram\.com\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
   return match ? match[1] : null;
@@ -44,6 +49,40 @@ function buildInstagramPaths(shortcode: string, resourceType: InstagramResource)
       : [`p/${shortcode}`, `reel/${shortcode}`, `tv/${shortcode}`];
 
   return preferred;
+}
+
+async function checkInstagramAccess(shortcode: string, resourceType: InstagramResource): Promise<AccessCheckResult> {
+  const url = `https://www.instagram.com/${resourceType}/${shortcode}/`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+    });
+
+    const html = await response.text();
+
+    const hasErrorRoute = /PolarisErrorRoute/.test(html);
+    const hasRestrictedAge = /"restricted_age"\s*:\s*(?!false|null|0)\d+/.test(html);
+    const unavailable = /This content is no longer available/i.test(html);
+
+    if (hasErrorRoute || hasRestrictedAge || unavailable) {
+      return {
+        blocked: true,
+        reason: resourceType === 'reel' || resourceType === 'tv'
+          ? 'Este conteúdo de vídeo está bloqueado pelo Instagram para visitantes sem sessão autenticada. Teste com outro Reel público.'
+          : 'Este conteúdo não está acessível publicamente no Instagram no momento.',
+      };
+    }
+  } catch (error) {
+    console.log('Access check failed:', error);
+  }
+
+  return { blocked: false };
 }
 
 function extractFromGraphQLMedia(media: any): MediaItem[] {
@@ -335,6 +374,14 @@ Deno.serve(async (req) => {
     const resourceType = detectResourceType(url);
     console.log('Shortcode:', shortcode, '| Expected:', expectedType, '| Resource:', resourceType);
 
+    const accessCheck = await checkInstagramAccess(shortcode, resourceType);
+    if (accessCheck.blocked) {
+      return new Response(
+        JSON.stringify({ success: false, error: accessCheck.reason }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     let items: MediaItem[] = [];
 
     // Strategy 1: GraphQL POST (most reliable)
@@ -357,8 +404,8 @@ Deno.serve(async (req) => {
 
     if (items.length === 0) {
       return new Response(
-        JSON.stringify({ success: false, error: 'Não foi possível extrair a mídia. O post pode ser privado ou o formato não é suportado.' }),
-        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ success: false, error: 'Não foi possível extrair a mídia; o Instagram não expôs um arquivo público direto para este link.' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
