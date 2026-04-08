@@ -423,11 +423,12 @@ async function fetchViaRapidAPI(instagramUrl: string): Promise<MediaItem[]> {
 
   try {
     const encodedUrl = encodeURIComponent(instagramUrl);
-    const response = await fetch(`https://${apiHost}/media?url=${encodedUrl}`, {
+    const response = await fetch(`https://${apiHost}/scraper?url=${encodedUrl}`, {
       method: 'GET',
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': apiHost,
+        'Content-Type': 'application/json',
       },
     });
 
@@ -444,19 +445,26 @@ async function fetchViaRapidAPI(instagramUrl: string): Promise<MediaItem[]> {
 
     const items: MediaItem[] = [];
 
-    // Handle different response formats from various RapidAPI Instagram APIs
-    if (data.media && Array.isArray(data.media)) {
+    // Primary format: { data: [{ media, thumb }] }
+    if (data.data && Array.isArray(data.data)) {
+      for (const entry of data.data) {
+        if (entry.media) {
+          const isVideo = entry.media.includes('.mp4') || entry.media.includes('video');
+          items.push({
+            url: entry.media,
+            type: isVideo ? 'video' : 'image',
+            thumbnail: entry.thumb,
+            filename: isVideo ? `instagram_video_${Date.now()}_${items.length}.mp4` : `instagram_image_${Date.now()}_${items.length}.jpg`,
+          });
+        }
+      }
+    } else if (data.media && Array.isArray(data.media)) {
       for (const m of data.media) {
         if (m.type === 'video' || m.video_url) {
           items.push({ url: m.video_url || m.url, type: 'video', thumbnail: m.thumbnail || m.image_url, filename: `instagram_video_${Date.now()}_${items.length}.mp4` });
         } else {
           items.push({ url: m.image_url || m.url, type: 'image', filename: `instagram_image_${Date.now()}_${items.length}.jpg` });
         }
-      }
-    } else if (data.result && Array.isArray(data.result)) {
-      for (const r of data.result) {
-        const isVideo = r.type === 'video' || r.url?.includes('.mp4');
-        items.push({ url: r.url || r.download_url, type: isVideo ? 'video' : 'image', thumbnail: r.thumbnail, filename: isVideo ? `instagram_video_${Date.now()}_${items.length}.mp4` : `instagram_image_${Date.now()}_${items.length}.jpg` });
       }
     } else if (data.video_url || data.image_url) {
       if (data.video_url) {
@@ -467,9 +475,6 @@ async function fetchViaRapidAPI(instagramUrl: string): Promise<MediaItem[]> {
     } else if (data.url) {
       const isVideo = data.type === 'video' || data.is_video || data.url?.includes('.mp4');
       items.push({ url: data.url, type: isVideo ? 'video' : 'image', filename: isVideo ? `instagram_video_${Date.now()}.mp4` : `instagram_image_${Date.now()}.jpg` });
-    } else if (data.download_url) {
-      const isVideo = data.type === 'video' || data.download_url?.includes('.mp4');
-      items.push({ url: data.download_url, type: isVideo ? 'video' : 'image', filename: isVideo ? `instagram_video_${Date.now()}.mp4` : `instagram_image_${Date.now()}.jpg` });
     }
 
     if (items.length) {
