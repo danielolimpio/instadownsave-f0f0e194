@@ -104,6 +104,14 @@ function inferMediaType(url?: string, hints: unknown[] = []): MediaType | null {
   return null;
 }
 
+function inferTypeFromTarget(target: InstagramTarget): MediaType | null {
+  if (target.resourceType === 'reel' || target.resourceType === 'tv') {
+    return 'video';
+  }
+
+  return null;
+}
+
 function pushMediaItem(
   items: MediaItem[],
   seen: Set<string>,
@@ -370,6 +378,7 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
 
   const items: MediaItem[] = [];
   const seen = new Set<string>();
+  const targetTypeHint = inferTypeFromTarget(target);
 
   const username = sanitizeText(
     payload?.username ?? payload?.user?.username ?? payload?.owner?.username,
@@ -378,38 +387,79 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
     payload?.caption ?? payload?.title ?? payload?.description ?? payload?.data?.caption,
   );
 
+  const pushRapidApiCandidate = (
+    candidate: unknown,
+    meta?: {
+      typeHints?: unknown[];
+      thumbnail?: unknown;
+    },
+  ) => {
+    if (Array.isArray(candidate)) {
+      for (const entry of candidate) {
+        pushRapidApiCandidate(entry, meta);
+      }
+      return;
+    }
+
+    const mediaUrl = sanitizeMediaUrl(candidate);
+    if (!mediaUrl) return;
+
+    const mediaType = inferMediaType(mediaUrl, [
+      ...(meta?.typeHints ?? []),
+      targetTypeHint,
+    ]) ?? targetTypeHint;
+
+    pushMediaItem(items, seen, {
+      url: mediaUrl,
+      type: mediaType,
+      thumbnail: sanitizeMediaUrl(meta?.thumbnail),
+      shortcode: target.shortcode,
+    });
+  };
+
   const scanNode = (node: any) => {
     if (!node || typeof node !== 'object') return;
 
-    const mediaUrl = sanitizeMediaUrl(
-      node?.video_url ??
-      node?.videoUrl ??
-      node?.media ??
-      node?.download_url ??
-      node?.downloadUrl ??
-      node?.url ??
-      node?.image_url ??
-      node?.imageUrl ??
-      node?.display_url,
-    );
-
-    const mediaType = inferMediaType(mediaUrl, [
+    const typeHints = [
       node?.type,
       node?.media_type,
       node?.mime_type,
       node?.is_video,
       node?.isVideo,
-    ]);
+      node?.kind,
+    ];
 
-    pushMediaItem(items, seen, {
-      url: mediaUrl,
-      type: mediaType,
-      thumbnail: sanitizeMediaUrl(
-        node?.thumb ?? node?.thumbnail ?? node?.thumbnail_url ?? node?.display_url ?? node?.image_url,
-      ),
-      shortcode: target.shortcode,
-    });
+    const thumbnail = node?.thumb ?? node?.thumbnail ?? node?.thumbnail_url ?? node?.display_url ?? node?.image_url;
+
+    pushRapidApiCandidate(node?.video_url, { typeHints: ['video', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.videoUrl, { typeHints: ['video', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.media, { typeHints, thumbnail });
+    pushRapidApiCandidate(node?.download_url, { typeHints, thumbnail });
+    pushRapidApiCandidate(node?.downloadUrl, { typeHints, thumbnail });
+    pushRapidApiCandidate(node?.url, { typeHints, thumbnail });
+    pushRapidApiCandidate(node?.image_url, { typeHints: ['image', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.imageUrl, { typeHints: ['image', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.display_url, { typeHints: ['image', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.src, { typeHints, thumbnail });
   };
+
+  if (Array.isArray(payload?.data)) {
+    for (const entry of payload.data) {
+      scanNode(entry);
+    }
+  }
+
+  if (Array.isArray(payload?.media)) {
+    for (const entry of payload.media) {
+      scanNode(entry);
+    }
+  }
+
+  if (Array.isArray(payload?.url)) {
+    for (const entry of payload.url) {
+      pushRapidApiCandidate(entry, { typeHints: [targetTypeHint] });
+    }
+  }
 
   const stack: any[] = [payload];
   const visited = new WeakSet<object>();
