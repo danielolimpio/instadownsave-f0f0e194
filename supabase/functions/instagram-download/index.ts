@@ -423,11 +423,12 @@ async function fetchViaRapidAPI(instagramUrl: string): Promise<MediaItem[]> {
 
   try {
     const encodedUrl = encodeURIComponent(instagramUrl);
-    const response = await fetch(`https://${apiHost}/media?url=${encodedUrl}`, {
+    const response = await fetch(`https://${apiHost}/scraper?url=${encodedUrl}`, {
       method: 'GET',
       headers: {
         'X-RapidAPI-Key': apiKey,
         'X-RapidAPI-Host': apiHost,
+        'Content-Type': 'application/json',
       },
     });
 
