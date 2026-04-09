@@ -1,5 +1,6 @@
-import { Home, Video, Tv, Circle, Image, Download, Settings, Camera } from "lucide-react";
+import { Home, Video, Tv, Circle, Image, Download, Settings } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
+import logo from "@/assets/logo.png";
 
 const navItems = [
   { icon: Home, label: "Início", path: "/" },
@@ -17,9 +18,7 @@ const AppSidebar = () => {
   return (
     <aside className="hidden lg:flex flex-col fixed left-0 top-0 bottom-0 w-[280px] bg-card border-r border-border z-40">
       <Link to="/" className="flex items-center gap-3 px-6 py-6">
-        <div className="instagram-gradient rounded-xl p-2">
-          <Camera className="h-6 w-6 text-primary-foreground" />
-        </div>
+        <img src={logo} alt="Baixar Vídeos Instagram" className="h-10 w-10 rounded-xl" />
         <span className="text-xl font-bold instagram-gradient-text">InstaSave</span>
       </Link>
 

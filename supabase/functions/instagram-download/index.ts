@@ -359,7 +359,7 @@ function deepExtractMedia(obj: any, shortcode: string, resourceType: ResourceTyp
   return null;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 15000) {
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs);
 
