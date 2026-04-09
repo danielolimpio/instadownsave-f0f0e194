@@ -550,8 +550,49 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
   }
 }
 
+async function fetchViaGraphQL(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (target.resourceType === 'stories') return null;
+  
+  console.log('Strategy 2: GraphQL');
+
+  const queryHash = '9f8827793ef34641b2fb195d4d41151c';
+  const variables = JSON.stringify({ shortcode: target.shortcode });
+  
+  try {
+    const response = await fetchWithTimeout(
+      `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(variables)}`,
+      {
+        method: 'GET',
+        headers: {
+          ...BROWSER_HEADERS,
+          'Accept': '*/*',
+          'X-Requested-With': 'XMLHttpRequest',
+          'Sec-Fetch-Dest': 'empty',
+          'Sec-Fetch-Mode': 'cors',
+          'Sec-Fetch-Site': 'same-origin',
+        },
+      },
+    );
+
+    console.log('GraphQL status:', response.status);
+    if (!response.ok) return null;
+
+    const payload = await response.json().catch(() => null);
+    if (!payload) return null;
+
+    const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
+    if (result) {
+      console.log('GraphQL success:', result.items.map(i => `${i.type}:${i.url.slice(0, 90)}`));
+    }
+    return result;
+  } catch (error) {
+    console.log('GraphQL error:', String(error));
+    return null;
+  }
+}
+
 async function fetchViaPublicJson(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  console.log('Strategy 2: public JSON');
+  console.log('Strategy 2.5: public JSON');
 
   for (const path of getCandidatePaths(target)) {
     try {
