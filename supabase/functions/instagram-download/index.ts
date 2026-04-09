@@ -602,10 +602,33 @@ async function fetchViaEmbed(target: InstagramTarget): Promise<InstagramMediaRes
       if (!response.ok) continue;
 
       const html = await response.text();
+      console.log(`Embed HTML length (${path}):`, html.length);
+
+      // Try to find embedded JSON data first
+      const embedJsonMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]*,\s*({.+?})\s*\)/s);
+      if (embedJsonMatch?.[1]) {
+        try {
+          const payload = JSON.parse(embedJsonMatch[1]);
+          const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
+          if (result) return result;
+        } catch {}
+      }
+
+      // Try gql_data in embed
+      const gqlMatch = html.match(/"gql_data"\s*:\s*({.+?})\s*,\s*"[a-z]/s);
+      if (gqlMatch?.[1]) {
+        try {
+          const payload = JSON.parse(gqlMatch[1]);
+          const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
+          if (result) return result;
+        } catch {}
+      }
 
       const videoUrl = sanitizeMediaUrl(html.match(/"video_url"\s*:\s*"([^"]+)"/)?.[1]);
       const displayUrl = sanitizeMediaUrl(html.match(/"display_url"\s*:\s*"([^"]+)"/)?.[1]);
       const username = sanitizeText(html.match(/"owner_username"\s*:\s*"([^"]+)"/)?.[1]);
+
+      console.log(`Embed extract (${path}): video=${!!videoUrl}, image=${!!displayUrl}`);
 
       const items: MediaItem[] = [];
       const seen = new Set<string>();
@@ -644,6 +667,64 @@ async function fetchViaEmbed(target: InstagramTarget): Promise<InstagramMediaRes
   }
 
   return null;
+}
+
+// Convert Instagram shortcode to numeric media ID
+function shortcodeToMediaId(shortcode: string): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+  let id = BigInt(0);
+  for (const char of shortcode) {
+    id = id * BigInt(64) + BigInt(alphabet.indexOf(char));
+  }
+  return id.toString();
+}
+
+async function fetchViaInternalApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (target.resourceType === 'stories') return null;
+  
+  console.log('Strategy 3.5: Internal API v1');
+  
+  try {
+    const mediaId = shortcodeToMediaId(target.shortcode);
+    console.log('Media ID:', mediaId);
+    
+    const response = await fetchWithTimeout(
+      `https://i.instagram.com/api/v1/media/${mediaId}/info/`,
+      {
+        method: 'GET',
+        headers: {
+          ...BROWSER_HEADERS,
+          'User-Agent': 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229258)',
+        },
+      },
+    );
+
+    console.log('Internal API status:', response.status);
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.log('Internal API error:', body.slice(0, 300));
+      return null;
+    }
+
+    const payload = await response.json();
+    console.log('Internal API keys:', Object.keys(payload));
+    
+    const result = extractFromApiItem(payload?.items?.[0], target.shortcode, target.resourceType);
+    if (result) {
+      console.log('Internal API success:', result.items.map(i => `${i.type}:${i.url.slice(0, 90)}`));
+      return result;
+    }
+    
+    // Try deep extract as fallback
+    const deepResult = deepExtractMedia(payload, target.shortcode, target.resourceType);
+    if (deepResult) return deepResult;
+    
+    return null;
+  } catch (error) {
+    console.log('Internal API error:', String(error));
+    return null;
+  }
 }
 
 async function fetchViaHtml(target: InstagramTarget): Promise<InstagramMediaResult | null> {
