@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, ClipboardPaste, Download, Loader2, Image, Film, X } from "lucide-react";
+import { Link, ClipboardPaste, Download, Loader2, Image, Film, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -30,6 +30,11 @@ const URLInput = () => {
     } catch {
       toast.error("Não foi possível acessar a área de transferência.");
     }
+  };
+
+  const handleClear = () => {
+    setUrl("");
+    setMediaItems([]);
   };
 
   const handleSubmit = async () => {
@@ -78,7 +83,6 @@ const URLInput = () => {
 
       if (error) throw new Error("Erro ao baixar o arquivo.");
 
-      // data is already the blob from the edge function
       const blob = data instanceof Blob ? data : new Blob([data]);
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -107,29 +111,41 @@ const URLInput = () => {
     <div className="max-w-[700px] mx-auto px-4">
       {/* Input */}
       <div className="relative flex items-center bg-card rounded-lg border border-border focus-within:border-primary focus-within:ring-1 focus-within:ring-primary transition-all">
-        <Link className="absolute left-4 h-5 w-5 text-muted-foreground" />
+        <Link className="absolute left-3 sm:left-4 h-5 w-5 text-muted-foreground" />
         <input
           type="url"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="Cole o link do Instagram aqui..."
-          className="w-full h-14 pl-12 pr-24 bg-transparent text-foreground placeholder:text-muted-foreground text-base outline-none rounded-lg"
+          className="w-full h-12 sm:h-14 pl-10 sm:pl-12 pr-28 sm:pr-36 bg-transparent text-foreground placeholder:text-muted-foreground text-sm sm:text-base outline-none rounded-lg"
         />
-        <button
-          onClick={handlePaste}
-          className="absolute right-3 flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-primary hover:bg-secondary rounded-md transition-colors"
-        >
-          <ClipboardPaste className="h-4 w-4" />
-          Colar
-        </button>
+        <div className="absolute right-2 sm:right-3 flex items-center gap-1">
+          {url && (
+            <button
+              onClick={handleClear}
+              className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10 rounded-md transition-colors"
+              title="Limpar"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Limpar</span>
+            </button>
+          )}
+          <button
+            onClick={handlePaste}
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 text-sm font-medium text-primary hover:bg-secondary rounded-md transition-colors"
+          >
+            <ClipboardPaste className="h-4 w-4" />
+            <span className="hidden sm:inline">Colar</span>
+          </button>
+        </div>
       </div>
 
       {/* Download button */}
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className="mt-4 w-full h-14 instagram-gradient text-primary-foreground font-bold text-base rounded-lg flex items-center justify-center gap-2 gradient-shadow hover:opacity-90 transition-opacity disabled:opacity-70"
+        className="mt-3 sm:mt-4 w-full h-12 sm:h-14 instagram-gradient text-primary-foreground font-bold text-sm sm:text-base rounded-lg flex items-center justify-center gap-2 gradient-shadow hover:opacity-90 transition-opacity disabled:opacity-70"
       >
         {loading ? (
           <Loader2 className="h-5 w-5 animate-spin" />
@@ -141,9 +157,9 @@ const URLInput = () => {
 
       {/* Results */}
       {mediaItems.length > 0 && (
-        <div className="mt-6 space-y-4">
+        <div className="mt-4 sm:mt-6 space-y-3 sm:space-y-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold text-foreground">
+            <h3 className="text-base sm:text-lg font-semibold text-foreground">
               {mediaItems.length} arquivo(s) encontrado(s)
             </h3>
             <button
@@ -158,10 +174,10 @@ const URLInput = () => {
             {mediaItems.map((item, index) => (
               <div
                 key={index}
-                className="flex items-center gap-4 p-4 bg-card rounded-lg border border-border"
+                className="flex items-center gap-3 sm:gap-4 p-3 sm:p-4 bg-card rounded-lg border border-border"
               >
                 {/* Thumbnail / Icon */}
-                <div className="flex-shrink-0 w-16 h-16 rounded-md overflow-hidden bg-muted flex items-center justify-center">
+                <div className="flex-shrink-0 w-12 h-12 sm:w-16 sm:h-16 rounded-md overflow-hidden bg-muted flex items-center justify-center">
                   {item.thumbnail ? (
                     <img
                       src={item.thumbnail}
@@ -172,15 +188,15 @@ const URLInput = () => {
                       }}
                     />
                   ) : item.type === "video" ? (
-                    <Film className="h-8 w-8 text-muted-foreground" />
+                    <Film className="h-6 w-6 sm:h-8 sm:w-8 text-muted-foreground" />
                   ) : (
-                    <Image className="h-8 w-8 text-muted-foreground" />
+                    <Image className="h-6 w-6 sm:h-8 sm:w-8 text-muted-foreground" />
                   )}
                 </div>
 
                 {/* Info */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
+                  <p className="text-xs sm:text-sm font-medium text-foreground truncate">
                     {item.filename}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
@@ -200,14 +216,14 @@ const URLInput = () => {
                 <button
                   onClick={() => handleDownload(item, index)}
                   disabled={downloading[index]}
-                  className="flex-shrink-0 instagram-gradient text-primary-foreground px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-70"
+                  className="flex-shrink-0 instagram-gradient text-primary-foreground px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-semibold flex items-center gap-1.5 sm:gap-2 hover:opacity-90 transition-opacity disabled:opacity-70"
                 >
                   {downloading[index] ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <Download className="h-4 w-4" />
                   )}
-                  {downloading[index] ? "..." : "Baixar"}
+                  <span className="hidden sm:inline">{downloading[index] ? "..." : "Baixar"}</span>
                 </button>
               </div>
             ))}

@@ -11,7 +11,7 @@ const PageLayout = ({ children }: PageLayoutProps) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex flex-col lg:flex-row">
       <AppSidebar />
       {mobileMenuOpen && (
         <div
@@ -19,7 +19,7 @@ const PageLayout = ({ children }: PageLayoutProps) => {
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
-      <div className="flex-1 lg:ml-[280px] flex flex-col min-h-screen">
+      <div className="flex-1 lg:ml-[280px] flex flex-col min-h-screen w-full overflow-x-hidden">
         <AppHeader onMenuToggle={() => setMobileMenuOpen(!mobileMenuOpen)} />
         <main className="flex-1">{children}</main>
         <AppFooter />
