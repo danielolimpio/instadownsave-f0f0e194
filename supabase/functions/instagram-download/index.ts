@@ -505,27 +505,36 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
 
   try {
     console.log('Strategy 1: RapidAPI');
+    console.log('RapidAPI host:', apiHost);
+    console.log('RapidAPI key length:', apiKey.length);
+
+    const rapidApiUrl = `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`;
+    console.log('RapidAPI URL:', rapidApiUrl);
 
     const response = await fetchWithTimeout(
-      `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`,
+      rapidApiUrl,
       {
         method: 'GET',
         headers: {
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': apiHost,
-          'Content-Type': 'application/json',
         },
       },
+      20000,
     );
 
     console.log('RapidAPI status:', response.status);
 
     if (!response.ok) {
-      console.log('RapidAPI body:', (await response.text()).slice(0, 500));
+      const body = await response.text();
+      console.log('RapidAPI error body:', body.slice(0, 500));
       return null;
     }
 
     const payload = await response.json();
+    console.log('RapidAPI payload keys:', Object.keys(payload));
+    console.log('RapidAPI payload preview:', JSON.stringify(payload).slice(0, 500));
+    
     const result = extractFromRapidApiPayload(payload, target);
 
     if (result) {
@@ -536,7 +545,7 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
 
     return result;
   } catch (error) {
-    console.log('RapidAPI error:', error);
+    console.log('RapidAPI error:', String(error));
     return null;
   }
 }
