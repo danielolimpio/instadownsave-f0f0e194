@@ -497,10 +497,10 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
 // PRIMARY: Reels Downloader - Insta Downloader (POST method, more reliable for Reels)
 async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHostV2 = Deno.env.get('RAPIDAPI_HOST_V2');
+  const apiHostV2 = 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
 
-  if (!apiKey || !apiHostV2) {
-    console.log('RapidAPI V2: credentials not configured, skipping');
+  if (!apiKey) {
+    console.log('RapidAPI V2: API key not configured, skipping');
     return null;
   }
 
