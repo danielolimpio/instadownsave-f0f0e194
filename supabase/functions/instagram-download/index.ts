@@ -497,26 +497,26 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
 // PRIMARY: Reels Downloader - Insta Downloader (POST method, more reliable for Reels)
 async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHostV2 = Deno.env.get('RAPIDAPI_HOST_V2');
+  const apiHostV2 = 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
 
-  if (!apiKey || !apiHostV2) {
-    console.log('RapidAPI V2: credentials not configured, skipping');
+  if (!apiKey) {
+    console.log('RapidAPI V2: API key not configured, skipping');
     return null;
   }
 
   try {
     console.log('Strategy 1A: RapidAPI V2 (Reels Downloader)');
 
+    const encodedUrl = encodeURIComponent(target.canonicalUrl);
     const response = await fetchWithTimeout(
-      `https://${apiHostV2}/`,
+      `https://${apiHostV2}/unified/url?url=${encodedUrl}`,
       {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': apiHostV2,
         },
-        body: JSON.stringify({ url: target.canonicalUrl }),
       },
       25000,
     );
@@ -548,6 +548,59 @@ async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMed
   }
 }
 
+// STRATEGY 1B: Insta Api (same developer, different host)
+async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  const apiKey = Deno.env.get('RAPIDAPI_KEY');
+  const apiHostV3 = 'instagram-story-downloader-media-downloader.p.rapidapi.com';
+
+  if (!apiKey) {
+    console.log('RapidAPI V3: API key not configured, skipping');
+    return null;
+  }
+
+  try {
+    console.log('Strategy 1B: RapidAPI V3 (Insta Api)');
+
+    const encodedUrl = encodeURIComponent(target.canonicalUrl);
+    const response = await fetchWithTimeout(
+      `https://${apiHostV3}/url?url=${encodedUrl}`,
+      {
+        method: 'GET',
+        headers: {
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': apiHostV3,
+        },
+      },
+      25000,
+    );
+
+    console.log('RapidAPI V3 status:', response.status);
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.log('RapidAPI V3 error body:', body.slice(0, 500));
+      return null;
+    }
+
+    const payload = await response.json();
+    console.log('RapidAPI V3 payload keys:', Object.keys(payload));
+    console.log('RapidAPI V3 payload preview:', JSON.stringify(payload).slice(0, 800));
+
+    const result = extractFromRapidApiPayload(payload, target);
+
+    if (result) {
+      console.log('RapidAPI V3 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
+    } else {
+      console.log('RapidAPI V3 returned no parsable media');
+    }
+
+    return result;
+  } catch (error) {
+    console.log('RapidAPI V3 error:', String(error));
+    return null;
+  }
+}
+
 // BACKUP: Original RapidAPI (GET /scraper method)
 async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
@@ -559,7 +612,7 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
   }
 
   try {
-    console.log('Strategy 1B: RapidAPI V1 (backup)');
+    console.log('Strategy 1C: RapidAPI V1 (legacy backup)');
 
     const rapidApiUrl = `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`;
 
@@ -907,6 +960,7 @@ async function getInstagramMedia(rawUrl: string): Promise<InstagramMediaResult |
 
   return (
     await fetchViaRapidApiV2(target)
+    ?? await fetchViaRapidApiV3(target)
     ?? await fetchViaRapidApi(target)
     ?? await fetchViaGraphQL(target)
     ?? await fetchViaInternalApi(target)
