@@ -612,7 +612,7 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
   }
 
   try {
-    console.log('Strategy 1B: RapidAPI V1 (backup)');
+    console.log('Strategy 1C: RapidAPI V1 (legacy backup)');
 
     const rapidApiUrl = `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`;
 
