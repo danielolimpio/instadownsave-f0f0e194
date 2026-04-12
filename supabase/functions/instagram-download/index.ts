@@ -494,22 +494,74 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
   });
 }
 
+// PRIMARY: Reels Downloader - Insta Downloader (POST method, more reliable for Reels)
+async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  const apiKey = Deno.env.get('RAPIDAPI_KEY');
+  const apiHostV2 = Deno.env.get('RAPIDAPI_HOST_V2');
+
+  if (!apiKey || !apiHostV2) {
+    console.log('RapidAPI V2: credentials not configured, skipping');
+    return null;
+  }
+
+  try {
+    console.log('Strategy 1A: RapidAPI V2 (Reels Downloader)');
+
+    const response = await fetchWithTimeout(
+      `https://${apiHostV2}/`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': apiHostV2,
+        },
+        body: JSON.stringify({ url: target.canonicalUrl }),
+      },
+      25000,
+    );
+
+    console.log('RapidAPI V2 status:', response.status);
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.log('RapidAPI V2 error body:', body.slice(0, 500));
+      return null;
+    }
+
+    const payload = await response.json();
+    console.log('RapidAPI V2 payload keys:', Object.keys(payload));
+    console.log('RapidAPI V2 payload preview:', JSON.stringify(payload).slice(0, 800));
+
+    const result = extractFromRapidApiPayload(payload, target);
+
+    if (result) {
+      console.log('RapidAPI V2 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
+    } else {
+      console.log('RapidAPI V2 returned no parsable media');
+    }
+
+    return result;
+  } catch (error) {
+    console.log('RapidAPI V2 error:', String(error));
+    return null;
+  }
+}
+
+// BACKUP: Original RapidAPI (GET /scraper method)
 async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
   const apiHost = Deno.env.get('RAPIDAPI_HOST');
 
   if (!apiKey || !apiHost) {
-    console.log('RapidAPI: credentials not configured, skipping');
+    console.log('RapidAPI V1: credentials not configured, skipping');
     return null;
   }
 
   try {
-    console.log('Strategy 1: RapidAPI');
-    console.log('RapidAPI host:', apiHost);
-    console.log('RapidAPI key length:', apiKey.length);
+    console.log('Strategy 1B: RapidAPI V1 (backup)');
 
     const rapidApiUrl = `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`;
-    console.log('RapidAPI URL:', rapidApiUrl);
 
     const response = await fetchWithTimeout(
       rapidApiUrl,
@@ -523,29 +575,28 @@ async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMedia
       20000,
     );
 
-    console.log('RapidAPI status:', response.status);
+    console.log('RapidAPI V1 status:', response.status);
 
     if (!response.ok) {
       const body = await response.text();
-      console.log('RapidAPI error body:', body.slice(0, 500));
+      console.log('RapidAPI V1 error body:', body.slice(0, 500));
       return null;
     }
 
     const payload = await response.json();
-    console.log('RapidAPI payload keys:', Object.keys(payload));
-    console.log('RapidAPI payload preview:', JSON.stringify(payload).slice(0, 500));
+    console.log('RapidAPI V1 payload keys:', Object.keys(payload));
     
     const result = extractFromRapidApiPayload(payload, target);
 
     if (result) {
-      console.log('RapidAPI success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
+      console.log('RapidAPI V1 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
     } else {
-      console.log('RapidAPI returned no parsable media');
+      console.log('RapidAPI V1 returned no parsable media');
     }
 
     return result;
   } catch (error) {
-    console.log('RapidAPI error:', String(error));
+    console.log('RapidAPI V1 error:', String(error));
     return null;
   }
 }
@@ -855,7 +906,8 @@ async function getInstagramMedia(rawUrl: string): Promise<InstagramMediaResult |
   console.log('Shortcode:', target.shortcode, '| Type:', target.resourceType);
 
   return (
-    await fetchViaRapidApi(target)
+    await fetchViaRapidApiV2(target)
+    ?? await fetchViaRapidApi(target)
     ?? await fetchViaGraphQL(target)
     ?? await fetchViaInternalApi(target)
     ?? await fetchViaPublicJson(target)
