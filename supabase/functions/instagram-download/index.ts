@@ -507,16 +507,16 @@ async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMed
   try {
     console.log('Strategy 1A: RapidAPI V2 (Reels Downloader)');
 
+    const encodedUrl = encodeURIComponent(target.canonicalUrl);
     const response = await fetchWithTimeout(
-      `https://${apiHostV2}/`,
+      `https://${apiHostV2}/unified/url?url=${encodedUrl}`,
       {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': apiHostV2,
         },
-        body: JSON.stringify({ url: target.canonicalUrl }),
       },
       25000,
     );
