@@ -906,7 +906,8 @@ async function getInstagramMedia(rawUrl: string): Promise<InstagramMediaResult |
   console.log('Shortcode:', target.shortcode, '| Type:', target.resourceType);
 
   return (
-    await fetchViaRapidApi(target)
+    await fetchViaRapidApiV2(target)
+    ?? await fetchViaRapidApi(target)
     ?? await fetchViaGraphQL(target)
     ?? await fetchViaInternalApi(target)
     ?? await fetchViaPublicJson(target)
