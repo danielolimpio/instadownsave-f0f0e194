@@ -549,10 +549,10 @@ async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMed
   }
 }
 
-// STRATEGY 1B: Insta Api (same developer, different host)
+// STRATEGY 1B: Instagram Downloader V4 (proven reliable for Reels, endpoint /convert)
 async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHostV3 = 'instagram-story-downloader-media-downloader.p.rapidapi.com';
+  const apiHostV3 = 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
 
   if (!apiKey) {
     console.log('RapidAPI V3: API key not configured, skipping');
@@ -560,17 +560,18 @@ async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMed
   }
 
   try {
-    console.log('Strategy 1B: RapidAPI V3 (Insta Api)');
+    console.log('Strategy 1B: RapidAPI V3 (IG Downloader V4 /convert)');
 
-    const encodedUrl = encodeURIComponent(target.canonicalUrl);
     const response = await fetchWithTimeout(
-      `https://${apiHostV3}/url?url=${encodedUrl}`,
+      `https://${apiHostV3}/convert`,
       {
-        method: 'GET',
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': apiHostV3,
         },
+        body: JSON.stringify({ url: target.canonicalUrl }),
       },
       25000,
     );
