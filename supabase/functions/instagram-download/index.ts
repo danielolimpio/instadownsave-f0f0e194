@@ -433,6 +433,7 @@ function extractFromRapidApiPayload(payload: any, target: InstagramTarget): Inst
 
     pushRapidApiCandidate(node?.video_url, { typeHints: ['video', ...typeHints], thumbnail });
     pushRapidApiCandidate(node?.videoUrl, { typeHints: ['video', ...typeHints], thumbnail });
+    pushRapidApiCandidate(node?.media_url, { typeHints, thumbnail });
     pushRapidApiCandidate(node?.media, { typeHints, thumbnail });
     pushRapidApiCandidate(node?.download_url, { typeHints, thumbnail });
     pushRapidApiCandidate(node?.downloadUrl, { typeHints, thumbnail });
