@@ -603,6 +603,86 @@ async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMed
   }
 }
 
+// STRATEGY 1C: Instagram Reels Downloader (codecrest8) - specifically for Reels
+async function fetchViaReelsDownloader(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  const apiKey = Deno.env.get('RAPIDAPI_KEY');
+  const apiHost = 'instagram-reels-downloader2.p.rapidapi.com';
+
+  if (!apiKey) {
+    console.log('Reels Downloader: API key not configured, skipping');
+    return null;
+  }
+
+  // Only use this for reels
+  if (target.resourceType !== 'reel') {
+    console.log('Reels Downloader: skipping, not a reel');
+    return null;
+  }
+
+  try {
+    console.log('Strategy 1C: Reels Downloader (codecrest8)');
+
+    const apiUrl = `https://${apiHost}/.netlify/functions/api/getLink?url=${encodeURIComponent(target.canonicalUrl)}`;
+    const response = await fetchWithTimeout(
+      apiUrl,
+      {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-RapidAPI-Key': apiKey,
+          'X-RapidAPI-Host': apiHost,
+        },
+      },
+      25000,
+    );
+
+    console.log('Reels Downloader status:', response.status);
+
+    if (!response.ok) {
+      const body = await response.text();
+      console.log('Reels Downloader error body:', body.slice(0, 500));
+      return null;
+    }
+
+    const payload = await response.json();
+    console.log('Reels Downloader payload keys:', Object.keys(payload));
+    console.log('Reels Downloader payload preview:', JSON.stringify(payload).slice(0, 800));
+
+    // Try to extract video URL from response
+    const videoUrl = payload?.url || payload?.video_url || payload?.downloadUrl || payload?.download_url || payload?.media_url;
+    
+    if (videoUrl && typeof videoUrl === 'string' && videoUrl.startsWith('http')) {
+      return {
+        shortcode: target.shortcode,
+        resourceType: target.resourceType,
+        type: 'video',
+        items: [{
+          url: videoUrl,
+          type: 'video',
+          filename: `instagram_reel_${target.shortcode}.mp4`,
+          thumbnail: payload?.thumbnail || payload?.cover || undefined,
+        }],
+        thumbnail: payload?.thumbnail || payload?.cover || undefined,
+        username: payload?.username || payload?.author || undefined,
+        caption: payload?.caption || payload?.title || undefined,
+      };
+    }
+
+    // Try extracting from nested structure
+    const result = extractFromRapidApiPayload(payload, target);
+    if (result) {
+      console.log('Reels Downloader success via generic parser');
+      return result;
+    }
+
+    console.log('Reels Downloader: no parsable media found');
+    return null;
+  } catch (error) {
+    console.log('Reels Downloader error:', String(error));
+    return null;
+  }
+}
+
 // BACKUP: Original RapidAPI (GET /scraper method)
 async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   const apiKey = Deno.env.get('RAPIDAPI_KEY');
