@@ -1043,6 +1043,7 @@ async function getInstagramMedia(rawUrl: string): Promise<InstagramMediaResult |
   return (
     await fetchViaRapidApiV2(target)
     ?? await fetchViaRapidApiV3(target)
+    ?? await fetchViaReelsDownloader(target)
     ?? await fetchViaRapidApi(target)
     ?? await fetchViaGraphQL(target)
     ?? await fetchViaInternalApi(target)
