@@ -560,18 +560,18 @@ async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMed
   }
 
   try {
-    console.log('Strategy 1B: RapidAPI V3 (IG Downloader V4 /convert)');
+    console.log('Strategy 1B: RapidAPI V3 (IG Downloader V4 /convert GET)');
 
+    const convertUrl = `https://${apiHostV3}/convert?url=${encodeURIComponent(target.canonicalUrl)}`;
     const response = await fetchWithTimeout(
-      `https://${apiHostV3}/convert`,
+      convertUrl,
       {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'Content-Type': 'application/json',
           'X-RapidAPI-Key': apiKey,
           'X-RapidAPI-Host': apiHostV3,
         },
-        body: JSON.stringify({ url: target.canonicalUrl }),
       },
       25000,
     );
