@@ -1,3 +1,6 @@
+// Instagram Downloader - Embed-only strategy (zero external APIs)
+// Uses Instagram's public /embed/ endpoint + GraphQL fallback (no auth needed)
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
@@ -30,21 +33,14 @@ interface InstagramMediaResult {
   caption?: string;
 }
 
-const BROWSER_HEADERS: Record<string, string> = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-  'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Referer': 'https://www.instagram.com/',
-  'Origin': 'https://www.instagram.com',
-  'X-IG-App-ID': '1217981644879628',
-};
+// Mobile user-agent works better with embed endpoint
+const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
+const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: {
-      ...corsHeaders,
-      'Content-Type': 'application/json',
-    },
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
   });
 }
 
@@ -52,141 +48,52 @@ function sanitizeText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
+function decodeHtmlEntities(s: string): string {
+  return s
+    .replace(/&quot;/g, '"')
+    .replace(/&#x2F;/g, '/')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\\u0026/g, '&')
+    .replace(/\\\//g, '/')
+    .replace(/\\"/g, '"');
+}
+
 function sanitizeMediaUrl(value: unknown): string | undefined {
   const raw = sanitizeText(value);
   if (!raw) return undefined;
-
-  const cleaned = raw
-    .replace(/\\u0026/g, '&')
-    .replace(/\\\//g, '/')
-    .replace(/&amp;/g, '&');
-
+  const cleaned = decodeHtmlEntities(raw);
   return /^https?:\/\//i.test(cleaned) ? cleaned : undefined;
 }
 
 function buildFilename(type: MediaType, shortcode: string, index: number, url: string): string {
-  const imageExtension = url.match(/\.(jpe?g|png|webp)(?:$|\?)/i)?.[1]?.toLowerCase() ?? 'jpg';
-  const normalizedImageExtension = imageExtension === 'jpeg' ? 'jpg' : imageExtension;
-  const extension = type === 'video' ? 'mp4' : normalizedImageExtension;
-  return `instagram_${type}_${shortcode}_${index + 1}.${extension}`;
-}
-
-function looksLikeMediaUrl(url?: string): boolean {
-  if (!url) return false;
-  if (!/^https?:\/\//i.test(url)) return false;
-  if (/instagram\.com\/(?:p|reel|reels|tv|stories)\//i.test(url)) return false;
-
-  return (
-    /scontent|cdninstagram|fbcdn/i.test(url) ||
-    /\.(mp4|m4v|mov|jpe?g|png|webp)(?:$|\?)/i.test(url)
-  );
-}
-
-function inferMediaType(url?: string, hints: unknown[] = []): MediaType | null {
-  const normalizedUrl = url?.toLowerCase() ?? '';
-
-  for (const hint of hints) {
-    if (hint === true || hint === 2) return 'video';
-    if (typeof hint === 'string') {
-      const normalizedHint = hint.toLowerCase();
-      if (normalizedHint.includes('video')) return 'video';
-      if (normalizedHint.includes('image') || normalizedHint.includes('photo')) return 'image';
-      if (normalizedHint.includes('mp4')) return 'video';
-      if (normalizedHint.includes('jpg') || normalizedHint.includes('jpeg') || normalizedHint.includes('png') || normalizedHint.includes('webp')) return 'image';
-    }
-  }
-
-  if (/\.(mp4|m4v|mov)(?:$|\?)/i.test(normalizedUrl)) return 'video';
-  if (/\.(jpe?g|png|webp)(?:$|\?)/i.test(normalizedUrl)) return 'image';
-  if (/\/o1\/v\/|\/v\/t\d+\/|\/t\d+\.2886-16\//i.test(normalizedUrl)) return 'video';
-  if (/\/e\d+\//i.test(normalizedUrl)) return 'image';
-
-  return null;
-}
-
-function inferTypeFromTarget(target: InstagramTarget): MediaType | null {
-  if (target.resourceType === 'reel' || target.resourceType === 'tv') {
-    return 'video';
-  }
-
-  return null;
-}
-
-function pushMediaItem(
-  items: MediaItem[],
-  seen: Set<string>,
-  input: {
-    url?: string;
-    type?: MediaType | null;
-    thumbnail?: string;
-    shortcode: string;
-  },
-) {
-  if (!input.url || !looksLikeMediaUrl(input.url) || !input.type || seen.has(input.url)) {
-    return;
-  }
-
-  const thumbnail = sanitizeMediaUrl(input.thumbnail);
-  const index = items.length;
-
-  items.push({
-    url: input.url,
-    type: input.type,
-    thumbnail,
-    filename: buildFilename(input.type, input.shortcode, index, input.url),
-  });
-
-  seen.add(input.url);
-}
-
-function normalizeResult(result: Omit<InstagramMediaResult, 'type'>): InstagramMediaResult | null {
-  if (!result.items.length) return null;
-
-  return {
-    ...result,
-    type: result.items.length > 1 ? 'carousel' : result.items[0].type,
-    thumbnail: result.thumbnail ?? result.items[0].thumbnail,
-  };
+  const imageExt = url.match(/\.(jpe?g|png|webp)(?:$|\?)/i)?.[1]?.toLowerCase() ?? 'jpg';
+  const normalized = imageExt === 'jpeg' ? 'jpg' : imageExt;
+  const ext = type === 'video' ? 'mp4' : normalized;
+  return `instagram_${type}_${shortcode}_${index + 1}.${ext}`;
 }
 
 function extractInstagramTarget(rawUrl: string): InstagramTarget | null {
   try {
     const parsed = new URL(rawUrl.trim());
     const hostname = parsed.hostname.toLowerCase();
-
-    if (!hostname.endsWith('instagram.com')) {
-      return null;
-    }
+    if (!hostname.endsWith('instagram.com')) return null;
 
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (!segments.length) return null;
-
     const root = segments[0].toLowerCase();
 
     if ((root === 'reel' || root === 'reels') && segments[1]) {
-      return {
-        canonicalUrl: `https://www.instagram.com/reel/${segments[1]}/`,
-        shortcode: segments[1],
-        resourceType: 'reel',
-      };
+      return { canonicalUrl: `https://www.instagram.com/reel/${segments[1]}/`, shortcode: segments[1], resourceType: 'reel' };
     }
-
     if (root === 'p' && segments[1]) {
-      return {
-        canonicalUrl: `https://www.instagram.com/p/${segments[1]}/`,
-        shortcode: segments[1],
-        resourceType: 'p',
-      };
+      return { canonicalUrl: `https://www.instagram.com/p/${segments[1]}/`, shortcode: segments[1], resourceType: 'p' };
     }
-
     if (root === 'tv' && segments[1]) {
-      return {
-        canonicalUrl: `https://www.instagram.com/tv/${segments[1]}/`,
-        shortcode: segments[1],
-        resourceType: 'tv',
-      };
+      return { canonicalUrl: `https://www.instagram.com/tv/${segments[1]}/`, shortcode: segments[1], resourceType: 'tv' };
     }
-
     if (root === 'stories' && segments[1] && segments[2]) {
       return {
         canonicalUrl: `https://www.instagram.com/stories/${segments[1]}/${segments[2]}/`,
@@ -195,904 +102,311 @@ function extractInstagramTarget(rawUrl: string): InstagramTarget | null {
         storyOwner: segments[1],
       };
     }
-
     return null;
   } catch {
     return null;
   }
 }
 
-function getCandidatePaths(target: InstagramTarget): string[] {
-  if (target.resourceType === 'stories' && target.storyOwner) {
-    return [`stories/${target.storyOwner}/${target.shortcode}`];
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 20000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
-
-  if (target.resourceType === 'reel') {
-    return [`reel/${target.shortcode}`, `p/${target.shortcode}`];
-  }
-
-  if (target.resourceType === 'tv') {
-    return [`tv/${target.shortcode}`, `p/${target.shortcode}`];
-  }
-
-  return [`p/${target.shortcode}`];
 }
 
-function extractCaption(media: any): string | undefined {
-  return sanitizeText(
-    media?.edge_media_to_caption?.edges?.[0]?.node?.text ?? media?.caption?.text ?? media?.caption,
-  );
-}
+// ============================================================
+// STRATEGY 1: Instagram embed page (public, no auth)
+// URL: https://www.instagram.com/p/{shortcode}/embed/captioned/
+// Returns HTML containing video_url / display_url in JSON blob
+// ============================================================
+async function fetchViaEmbed(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (target.resourceType === 'stories') return null; // stories require login
 
-function extractUsername(media: any): string | undefined {
-  return sanitizeText(media?.owner?.username ?? media?.user?.username ?? media?.username);
-}
+  const paths = target.resourceType === 'reel'
+    ? [`reel/${target.shortcode}`, `p/${target.shortcode}`]
+    : target.resourceType === 'tv'
+    ? [`tv/${target.shortcode}`, `p/${target.shortcode}`]
+    : [`p/${target.shortcode}`];
 
-function extractFromGraphQlMedia(media: any, shortcode: string, resourceType: ResourceType): InstagramMediaResult | null {
-  if (!media || typeof media !== 'object') return null;
-
-  const items: MediaItem[] = [];
-  const seen = new Set<string>();
-
-  const appendNode = (node: any) => {
-    const videoUrl = sanitizeMediaUrl(node?.video_url);
-    const imageUrl = sanitizeMediaUrl(node?.display_url ?? node?.thumbnail_src);
-
-    if (videoUrl) {
-      pushMediaItem(items, seen, {
-        url: videoUrl,
-        type: 'video',
-        thumbnail: imageUrl,
-        shortcode,
+  for (const path of paths) {
+    const embedUrl = `https://www.instagram.com/${path}/embed/captioned/`;
+    try {
+      const res = await fetchWithTimeout(embedUrl, {
+        headers: {
+          'User-Agent': MOBILE_UA,
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'en-US,en;q=0.9',
+        },
       });
-      return;
-    }
 
-    if (imageUrl) {
-      pushMediaItem(items, seen, {
-        url: imageUrl,
-        type: 'image',
-        thumbnail: imageUrl,
-        shortcode,
-      });
-    }
-  };
+      if (!res.ok) {
+        console.log(`[embed] ${path} -> HTTP ${res.status}`);
+        continue;
+      }
 
-  if (Array.isArray(media?.edge_sidecar_to_children?.edges)) {
-    for (const edge of media.edge_sidecar_to_children.edges) {
-      appendNode(edge?.node);
-    }
-  } else {
-    appendNode(media);
-  }
-
-  return normalizeResult({
-    shortcode,
-    resourceType,
-    items,
-    thumbnail: sanitizeMediaUrl(media?.display_url ?? media?.thumbnail_src),
-    username: extractUsername(media),
-    caption: extractCaption(media),
-  });
-}
-
-function extractFromApiItem(item: any, shortcode: string, resourceType: ResourceType): InstagramMediaResult | null {
-  if (!item || typeof item !== 'object') return null;
-
-  const items: MediaItem[] = [];
-  const seen = new Set<string>();
-
-  const appendApiNode = (node: any) => {
-    const videoUrl = sanitizeMediaUrl(node?.video_versions?.[0]?.url ?? node?.video_url);
-    const imageUrl = sanitizeMediaUrl(node?.image_versions2?.candidates?.[0]?.url ?? node?.display_url);
-
-    if (videoUrl) {
-      pushMediaItem(items, seen, {
-        url: videoUrl,
-        type: 'video',
-        thumbnail: imageUrl,
-        shortcode,
-      });
-      return;
-    }
-
-    if (imageUrl) {
-      pushMediaItem(items, seen, {
-        url: imageUrl,
-        type: 'image',
-        thumbnail: imageUrl,
-        shortcode,
-      });
-    }
-  };
-
-  if (Array.isArray(item?.carousel_media)) {
-    for (const child of item.carousel_media) {
-      appendApiNode(child);
-    }
-  } else {
-    appendApiNode(item);
-  }
-
-  return normalizeResult({
-    shortcode,
-    resourceType,
-    items,
-    thumbnail: sanitizeMediaUrl(item?.image_versions2?.candidates?.[0]?.url),
-    username: extractUsername(item),
-    caption: extractCaption(item),
-  });
-}
-
-function deepExtractMedia(obj: any, shortcode: string, resourceType: ResourceType, visited = new WeakSet<object>()): InstagramMediaResult | null {
-  if (!obj || typeof obj !== 'object') return null;
-  if (visited.has(obj)) return null;
-  visited.add(obj);
-
-  const graphQlMedia = obj?.graphql?.shortcode_media ?? obj?.shortcode_media ?? obj?.xdt_shortcode_media;
-  if (graphQlMedia) {
-    const graphQlResult = extractFromGraphQlMedia(graphQlMedia, shortcode, resourceType);
-    if (graphQlResult) return graphQlResult;
-  }
-
-  const apiItem = obj?.xdt_api__v1__media__shortcode__web_info?.items?.[0] ?? obj?.items?.[0];
-  if (apiItem) {
-    const apiResult = extractFromApiItem(apiItem, shortcode, resourceType);
-    if (apiResult) return apiResult;
-  }
-
-  if (Array.isArray(obj)) {
-    for (const entry of obj) {
-      const nested = deepExtractMedia(entry, shortcode, resourceType, visited);
-      if (nested) return nested;
-    }
-    return null;
-  }
-
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === 'object') {
-      const nested = deepExtractMedia(value, shortcode, resourceType, visited);
-      if (nested) return nested;
+      const html = await res.text();
+      const result = parseEmbedHtml(html, target);
+      if (result) {
+        console.log(`[embed] success for ${path}: ${result.items.length} item(s)`);
+        return result;
+      }
+      console.log(`[embed] ${path} -> no media parsed`);
+    } catch (err) {
+      console.log(`[embed] ${path} -> error`, err);
     }
   }
-
   return null;
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = 30000) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort('timeout'), timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function extractFromRapidApiPayload(payload: any, target: InstagramTarget): InstagramMediaResult | null {
-  if (!payload || typeof payload !== 'object') return null;
-
+function parseEmbedHtml(html: string, target: InstagramTarget): InstagramMediaResult | null {
   const items: MediaItem[] = [];
   const seen = new Set<string>();
-  const targetTypeHint = inferTypeFromTarget(target);
 
-  const username = sanitizeText(
-    payload?.username ?? payload?.user?.username ?? payload?.owner?.username,
-  );
-  const caption = sanitizeText(
-    payload?.caption ?? payload?.title ?? payload?.description ?? payload?.data?.caption,
-  );
+  // Try to find embedded JSON in window.__additionalDataLoaded or similar
+  const jsonMatches = [
+    ...html.matchAll(/"video_url":"([^"]+)"/g),
+    ...html.matchAll(/"video_versions":\s*\[\s*{[^}]*"url":"([^"]+)"/g),
+  ];
+  const imageMatches = [
+    ...html.matchAll(/"display_url":"([^"]+)"/g),
+    ...html.matchAll(/"image_versions2":\s*{\s*"candidates":\s*\[\s*{[^}]*"url":"([^"]+)"/g),
+  ];
 
-  const pushRapidApiCandidate = (
-    candidate: unknown,
-    meta?: {
-      typeHints?: unknown[];
-      thumbnail?: unknown;
-    },
-  ) => {
-    if (Array.isArray(candidate)) {
-      for (const entry of candidate) {
-        pushRapidApiCandidate(entry, meta);
+  // Parse <img class="EmbeddedMediaImage"> as fallback
+  const imgTagMatch = html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/i)
+    ?? html.match(/<img[^>]+class="[^"]*EmbeddedMedia[^"]*"[^>]+src="([^"]+)"/i);
+
+  // Parse <video src="...">
+  const videoTagMatches = [...html.matchAll(/<video[^>]+src="([^"]+)"/gi)];
+
+  // Username/caption
+  const username = sanitizeText(html.match(/"username":"([^"]+)"/)?.[1])
+    ?? sanitizeText(html.match(/UsernameText[^>]*>([^<]+)</)?.[1]);
+
+  const caption = sanitizeText(html.match(/"caption":"([^"]+)"/)?.[1]);
+
+  // Collect videos first
+  for (const m of jsonMatches) {
+    const url = sanitizeMediaUrl(m[1]);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      items.push({
+        url,
+        type: 'video',
+        filename: buildFilename('video', target.shortcode, items.length, url),
+      });
+    }
+  }
+  for (const m of videoTagMatches) {
+    const url = sanitizeMediaUrl(m[1]);
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      items.push({
+        url,
+        type: 'video',
+        filename: buildFilename('video', target.shortcode, items.length, url),
+      });
+    }
+  }
+
+  // Collect images (only if no video found, OR for carousels)
+  if (items.length === 0) {
+    for (const m of imageMatches) {
+      const url = sanitizeMediaUrl(m[1]);
+      if (url && !seen.has(url)) {
+        seen.add(url);
+        items.push({
+          url,
+          type: 'image',
+          thumbnail: url,
+          filename: buildFilename('image', target.shortcode, items.length, url),
+        });
       }
-      return;
     }
 
-    const mediaUrl = sanitizeMediaUrl(candidate);
-    if (!mediaUrl) return;
-
-    const mediaType = inferMediaType(mediaUrl, [
-      ...(meta?.typeHints ?? []),
-      targetTypeHint,
-    ]) ?? targetTypeHint;
-
-    pushMediaItem(items, seen, {
-      url: mediaUrl,
-      type: mediaType,
-      thumbnail: sanitizeMediaUrl(meta?.thumbnail),
-      shortcode: target.shortcode,
-    });
-  };
-
-  const scanNode = (node: any) => {
-    if (!node || typeof node !== 'object') return;
-
-    const typeHints = [
-      node?.type,
-      node?.media_type,
-      node?.mime_type,
-      node?.is_video,
-      node?.isVideo,
-      node?.kind,
-    ];
-
-    const thumbnail = node?.thumb ?? node?.thumbnail ?? node?.thumbnail_url ?? node?.display_url ?? node?.image_url;
-
-    pushRapidApiCandidate(node?.video_url, { typeHints: ['video', ...typeHints], thumbnail });
-    pushRapidApiCandidate(node?.videoUrl, { typeHints: ['video', ...typeHints], thumbnail });
-    pushRapidApiCandidate(node?.media_url, { typeHints, thumbnail });
-    pushRapidApiCandidate(node?.media, { typeHints, thumbnail });
-    pushRapidApiCandidate(node?.download_url, { typeHints, thumbnail });
-    pushRapidApiCandidate(node?.downloadUrl, { typeHints, thumbnail });
-    pushRapidApiCandidate(node?.url, { typeHints, thumbnail });
-    pushRapidApiCandidate(node?.image_url, { typeHints: ['image', ...typeHints], thumbnail });
-    pushRapidApiCandidate(node?.imageUrl, { typeHints: ['image', ...typeHints], thumbnail });
-    pushRapidApiCandidate(node?.display_url, { typeHints: ['image', ...typeHints], thumbnail });
-    pushRapidApiCandidate(node?.src, { typeHints, thumbnail });
-  };
-
-  if (Array.isArray(payload?.data)) {
-    for (const entry of payload.data) {
-      scanNode(entry);
-    }
-  }
-
-  if (Array.isArray(payload?.media)) {
-    for (const entry of payload.media) {
-      scanNode(entry);
-    }
-  }
-
-  if (Array.isArray(payload?.url)) {
-    for (const entry of payload.url) {
-      pushRapidApiCandidate(entry, { typeHints: [targetTypeHint] });
-    }
-  }
-
-  const stack: any[] = [payload];
-  const visited = new WeakSet<object>();
-
-  while (stack.length) {
-    const current = stack.pop();
-    if (!current || typeof current !== 'object') continue;
-    if (visited.has(current)) continue;
-    visited.add(current);
-
-    if (Array.isArray(current)) {
-      for (const entry of current) stack.push(entry);
-      continue;
-    }
-
-    scanNode(current);
-
-    for (const value of Object.values(current)) {
-      if (value && typeof value === 'object') {
-        stack.push(value);
+    if (items.length === 0 && imgTagMatch) {
+      const url = sanitizeMediaUrl(imgTagMatch[1]);
+      if (url) {
+        items.push({
+          url,
+          type: 'image',
+          thumbnail: url,
+          filename: buildFilename('image', target.shortcode, 0, url),
+        });
       }
     }
   }
 
-  return normalizeResult({
+  if (!items.length) return null;
+
+  // Set thumbnail for videos
+  const firstImage = imageMatches[0]?.[1] ? sanitizeMediaUrl(imageMatches[0][1]) : undefined;
+  for (const item of items) {
+    if (item.type === 'video' && !item.thumbnail) {
+      item.thumbnail = firstImage;
+    }
+  }
+
+  return {
     shortcode: target.shortcode,
     resourceType: target.resourceType,
+    type: items.length > 1 ? 'carousel' : items[0].type,
     items,
+    thumbnail: firstImage ?? items[0].thumbnail,
     username,
     caption,
-    thumbnail: items[0]?.thumbnail,
-  });
+  };
 }
 
-// PRIMARY: Reels Downloader - Insta Downloader (POST method, more reliable for Reels)
-async function fetchViaRapidApiV2(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHostV2 = 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
-
-  if (!apiKey) {
-    console.log('RapidAPI V2: API key not configured, skipping');
-    return null;
-  }
-
-  try {
-    console.log('Strategy 1A: RapidAPI V2 (Reels Downloader)');
-
-    const encodedUrl = encodeURIComponent(target.canonicalUrl);
-    const response = await fetchWithTimeout(
-      `https://${apiHostV2}/unified/url?url=${encodedUrl}`,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-RapidAPI-Key': apiKey,
-          'X-RapidAPI-Host': apiHostV2,
-        },
-      },
-      25000,
-    );
-
-    console.log('RapidAPI V2 status:', response.status);
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.log('RapidAPI V2 error body:', body.slice(0, 500));
-      return null;
-    }
-
-    const payload = await response.json();
-    console.log('RapidAPI V2 payload keys:', Object.keys(payload));
-    console.log('RapidAPI V2 payload preview:', JSON.stringify(payload).slice(0, 800));
-
-    const result = extractFromRapidApiPayload(payload, target);
-
-    if (result) {
-      console.log('RapidAPI V2 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
-    } else {
-      console.log('RapidAPI V2 returned no parsable media');
-    }
-
-    return result;
-  } catch (error) {
-    console.log('RapidAPI V2 error:', String(error));
-    return null;
-  }
-}
-
-// STRATEGY 1B: Instagram Downloader V4 (proven reliable for Reels, endpoint /convert)
-async function fetchViaRapidApiV3(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHostV3 = 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
-
-  if (!apiKey) {
-    console.log('RapidAPI V3: API key not configured, skipping');
-    return null;
-  }
-
-  try {
-    console.log('Strategy 1B: RapidAPI V3 (IG Downloader V4 /convert GET)');
-
-    const convertUrl = `https://${apiHostV3}/convert?url=${encodeURIComponent(target.canonicalUrl)}`;
-    const response = await fetchWithTimeout(
-      convertUrl,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-RapidAPI-Key': apiKey,
-          'X-RapidAPI-Host': apiHostV3,
-        },
-      },
-      25000,
-    );
-
-    console.log('RapidAPI V3 status:', response.status);
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.log('RapidAPI V3 error body:', body.slice(0, 500));
-      return null;
-    }
-
-    const payload = await response.json();
-    console.log('RapidAPI V3 payload keys:', Object.keys(payload));
-    console.log('RapidAPI V3 payload preview:', JSON.stringify(payload).slice(0, 800));
-
-    const result = extractFromRapidApiPayload(payload, target);
-
-    if (result) {
-      console.log('RapidAPI V3 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
-    } else {
-      console.log('RapidAPI V3 returned no parsable media');
-    }
-
-    return result;
-  } catch (error) {
-    console.log('RapidAPI V3 error:', String(error));
-    return null;
-  }
-}
-
-// STRATEGY 1C: Instagram Reels Downloader (codecrest8) - specifically for Reels
-async function fetchViaReelsDownloader(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHost = 'instagram-reels-downloader2.p.rapidapi.com';
-
-  if (!apiKey) {
-    console.log('Reels Downloader: API key not configured, skipping');
-    return null;
-  }
-
-  // Only use this for reels
-  if (target.resourceType !== 'reel') {
-    console.log('Reels Downloader: skipping, not a reel');
-    return null;
-  }
-
-  try {
-    console.log('Strategy 1C: Reels Downloader (codecrest8)');
-
-    const apiUrl = `https://${apiHost}/.netlify/functions/api/getLink?url=${encodeURIComponent(target.canonicalUrl)}`;
-    const response = await fetchWithTimeout(
-      apiUrl,
-      {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-RapidAPI-Key': apiKey,
-          'X-RapidAPI-Host': apiHost,
-        },
-      },
-      25000,
-    );
-
-    console.log('Reels Downloader status:', response.status);
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.log('Reels Downloader error body:', body.slice(0, 500));
-      return null;
-    }
-
-    const payload = await response.json();
-    console.log('Reels Downloader payload keys:', Object.keys(payload));
-    console.log('Reels Downloader payload preview:', JSON.stringify(payload).slice(0, 800));
-
-    // Try to extract video URL from response
-    const videoUrl = payload?.url || payload?.video_url || payload?.downloadUrl || payload?.download_url || payload?.media_url;
-    
-    if (videoUrl && typeof videoUrl === 'string' && videoUrl.startsWith('http')) {
-      return {
-        shortcode: target.shortcode,
-        resourceType: target.resourceType,
-        type: 'video',
-        items: [{
-          url: videoUrl,
-          type: 'video',
-          filename: `instagram_reel_${target.shortcode}.mp4`,
-          thumbnail: payload?.thumbnail || payload?.cover || undefined,
-        }],
-        thumbnail: payload?.thumbnail || payload?.cover || undefined,
-        username: payload?.username || payload?.author || undefined,
-        caption: payload?.caption || payload?.title || undefined,
-      };
-    }
-
-    // Try extracting from nested structure
-    const result = extractFromRapidApiPayload(payload, target);
-    if (result) {
-      console.log('Reels Downloader success via generic parser');
-      return result;
-    }
-
-    console.log('Reels Downloader: no parsable media found');
-    return null;
-  } catch (error) {
-    console.log('Reels Downloader error:', String(error));
-    return null;
-  }
-}
-
-// BACKUP: Original RapidAPI (GET /scraper method)
-async function fetchViaRapidApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  const apiKey = Deno.env.get('RAPIDAPI_KEY');
-  const apiHost = Deno.env.get('RAPIDAPI_HOST');
-
-  if (!apiKey || !apiHost) {
-    console.log('RapidAPI V1: credentials not configured, skipping');
-    return null;
-  }
-
-  try {
-    console.log('Strategy 1C: RapidAPI V1 (legacy backup)');
-
-    const rapidApiUrl = `https://${apiHost}/scraper?url=${encodeURIComponent(target.canonicalUrl)}`;
-
-    const response = await fetchWithTimeout(
-      rapidApiUrl,
-      {
-        method: 'GET',
-        headers: {
-          'X-RapidAPI-Key': apiKey,
-          'X-RapidAPI-Host': apiHost,
-        },
-      },
-      20000,
-    );
-
-    console.log('RapidAPI V1 status:', response.status);
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.log('RapidAPI V1 error body:', body.slice(0, 500));
-      return null;
-    }
-
-    const payload = await response.json();
-    console.log('RapidAPI V1 payload keys:', Object.keys(payload));
-    
-    const result = extractFromRapidApiPayload(payload, target);
-
-    if (result) {
-      console.log('RapidAPI V1 success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
-    } else {
-      console.log('RapidAPI V1 returned no parsable media');
-    }
-
-    return result;
-  } catch (error) {
-    console.log('RapidAPI V1 error:', String(error));
-    return null;
-  }
-}
-
+// ============================================================
+// STRATEGY 2: Public GraphQL endpoint (no auth, fallback)
+// Some posts (carousels, certain reels) work better here
+// ============================================================
 async function fetchViaGraphQL(target: InstagramTarget): Promise<InstagramMediaResult | null> {
   if (target.resourceType === 'stories') return null;
-  
-  console.log('Strategy 2: GraphQL');
 
-  const queryHash = '9f8827793ef34641b2fb195d4d41151c';
-  const variables = JSON.stringify({ shortcode: target.shortcode });
-  
+  const url = `https://www.instagram.com/api/v1/media/shortcode/${target.shortcode}/`;
+  // Note: this often requires X-IG-App-ID; we try the web profile endpoint instead.
+
+  // Use the documented "?__a=1&__d=dis" trick (works intermittently on /p/{code}/)
+  const tryUrl = `https://www.instagram.com/p/${target.shortcode}/?__a=1&__d=dis`;
   try {
-    const response = await fetchWithTimeout(
-      `https://www.instagram.com/graphql/query/?query_hash=${queryHash}&variables=${encodeURIComponent(variables)}`,
-      {
-        method: 'GET',
-        headers: {
-          ...BROWSER_HEADERS,
-          'Accept': '*/*',
-          'X-Requested-With': 'XMLHttpRequest',
-          'Sec-Fetch-Dest': 'empty',
-          'Sec-Fetch-Mode': 'cors',
-          'Sec-Fetch-Site': 'same-origin',
-        },
+    const res = await fetchWithTimeout(tryUrl, {
+      headers: {
+        'User-Agent': DESKTOP_UA,
+        'Accept': 'application/json,text/html',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'X-IG-App-ID': '936619743392459',
+        'X-Requested-With': 'XMLHttpRequest',
       },
-    );
+    });
 
-    console.log('GraphQL status:', response.status);
-    if (!response.ok) return null;
-
-    const payload = await response.json().catch(() => null);
-    if (!payload) return null;
-
-    const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
-    if (result) {
-      console.log('GraphQL success:', result.items.map(i => `${i.type}:${i.url.slice(0, 90)}`));
-    }
-    return result;
-  } catch (error) {
-    console.log('GraphQL error:', String(error));
-    return null;
-  }
-}
-
-async function fetchViaPublicJson(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  console.log('Strategy 2.5: public JSON');
-
-  for (const path of getCandidatePaths(target)) {
-    try {
-      const response = await fetchWithTimeout(
-        `https://www.instagram.com/${path}/?__a=1&__d=dis`,
-        {
-          method: 'GET',
-          headers: {
-            ...BROWSER_HEADERS,
-            'Accept': 'application/json,text/plain,*/*',
-            'X-Requested-With': 'XMLHttpRequest',
-          },
-        },
-      );
-
-      console.log(`Public JSON status (${path}):`, response.status);
-      if (!response.ok) continue;
-
-      const payload = await response.json().catch(() => null);
-      const result = payload ? deepExtractMedia(payload, target.shortcode, target.resourceType) : null;
-      if (result) return result;
-    } catch (error) {
-      console.log(`Public JSON error (${path}):`, error);
-    }
-  }
-
-  return null;
-}
-
-async function fetchViaEmbed(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  console.log('Strategy 3: embed');
-
-  for (const path of getCandidatePaths(target)) {
-    try {
-      const response = await fetchWithTimeout(
-        `https://www.instagram.com/${path}/embed/captioned/`,
-        {
-          method: 'GET',
-          headers: {
-            ...BROWSER_HEADERS,
-            'Accept': 'text/html,application/xhtml+xml',
-          },
-          redirect: 'follow',
-        },
-      );
-
-      console.log(`Embed status (${path}):`, response.status);
-      if (!response.ok) continue;
-
-      const html = await response.text();
-      console.log(`Embed HTML length (${path}):`, html.length);
-
-      // Try to find embedded JSON data first
-      const embedJsonMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]*,\s*({.+?})\s*\)/s);
-      if (embedJsonMatch?.[1]) {
-        try {
-          const payload = JSON.parse(embedJsonMatch[1]);
-          const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
-          if (result) return result;
-        } catch {}
-      }
-
-      // Try gql_data in embed
-      const gqlMatch = html.match(/"gql_data"\s*:\s*({.+?})\s*,\s*"[a-z]/s);
-      if (gqlMatch?.[1]) {
-        try {
-          const payload = JSON.parse(gqlMatch[1]);
-          const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
-          if (result) return result;
-        } catch {}
-      }
-
-      const videoUrl = sanitizeMediaUrl(html.match(/"video_url"\s*:\s*"([^"]+)"/)?.[1]);
-      const displayUrl = sanitizeMediaUrl(html.match(/"display_url"\s*:\s*"([^"]+)"/)?.[1]);
-      const username = sanitizeText(html.match(/"owner_username"\s*:\s*"([^"]+)"/)?.[1]);
-
-      console.log(`Embed extract (${path}): video=${!!videoUrl}, image=${!!displayUrl}`);
-
-      const items: MediaItem[] = [];
-      const seen = new Set<string>();
-
-      if (videoUrl) {
-        pushMediaItem(items, seen, {
-          url: videoUrl,
-          type: 'video',
-          thumbnail: displayUrl,
-          shortcode: target.shortcode,
-        });
-      }
-
-      if (!items.length && displayUrl) {
-        pushMediaItem(items, seen, {
-          url: displayUrl,
-          type: 'image',
-          thumbnail: displayUrl,
-          shortcode: target.shortcode,
-        });
-      }
-
-      const result = normalizeResult({
-        shortcode: target.shortcode,
-        resourceType: target.resourceType,
-        items,
-        username,
-        caption: undefined,
-        thumbnail: displayUrl,
-      });
-
-      if (result) return result;
-    } catch (error) {
-      console.log(`Embed error (${path}):`, error);
-    }
-  }
-
-  return null;
-}
-
-// Convert Instagram shortcode to numeric media ID
-function shortcodeToMediaId(shortcode: string): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  let id = BigInt(0);
-  for (const char of shortcode) {
-    id = id * BigInt(64) + BigInt(alphabet.indexOf(char));
-  }
-  return id.toString();
-}
-
-async function fetchViaInternalApi(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  if (target.resourceType === 'stories') return null;
-  
-  console.log('Strategy 3.5: Internal API v1');
-  
-  try {
-    const mediaId = shortcodeToMediaId(target.shortcode);
-    console.log('Media ID:', mediaId);
-    
-    const response = await fetchWithTimeout(
-      `https://i.instagram.com/api/v1/media/${mediaId}/info/`,
-      {
-        method: 'GET',
-        headers: {
-          ...BROWSER_HEADERS,
-          'User-Agent': 'Instagram 275.0.0.27.98 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 458229258)',
-        },
-      },
-    );
-
-    console.log('Internal API status:', response.status);
-
-    if (!response.ok) {
-      const body = await response.text();
-      console.log('Internal API error:', body.slice(0, 300));
+    if (!res.ok) {
+      console.log(`[graphql] HTTP ${res.status}`);
       return null;
     }
 
-    const payload = await response.json();
-    console.log('Internal API keys:', Object.keys(payload));
-    
-    const result = extractFromApiItem(payload?.items?.[0], target.shortcode, target.resourceType);
-    if (result) {
-      console.log('Internal API success:', result.items.map(i => `${i.type}:${i.url.slice(0, 90)}`));
-      return result;
-    }
-    
-    // Try deep extract as fallback
-    const deepResult = deepExtractMedia(payload, target.shortcode, target.resourceType);
-    if (deepResult) return deepResult;
-    
-    return null;
-  } catch (error) {
-    console.log('Internal API error:', String(error));
+    const text = await res.text();
+    let data: any;
+    try { data = JSON.parse(text); } catch { return null; }
+
+    const media = data?.items?.[0] ?? data?.graphql?.shortcode_media;
+    if (!media) return null;
+
+    return parseGraphQLMedia(media, target);
+  } catch (err) {
+    console.log('[graphql] error', err);
     return null;
   }
 }
 
-async function fetchViaHtml(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  console.log('Strategy 4: HTML');
+function parseGraphQLMedia(media: any, target: InstagramTarget): InstagramMediaResult | null {
+  const items: MediaItem[] = [];
+  const seen = new Set<string>();
 
-  for (const path of getCandidatePaths(target)) {
-    try {
-      const response = await fetchWithTimeout(
-        `https://www.instagram.com/${path}/`,
-        {
-          method: 'GET',
-          headers: {
-            ...BROWSER_HEADERS,
-            'Accept': 'text/html,application/xhtml+xml',
-          },
-          redirect: 'follow',
-        },
-      );
-
-      console.log(`HTML status (${path}):`, response.status);
-      if (!response.ok) continue;
-
-      const html = await response.text();
-
-      const structuredMatch = html.match(/window\.__additionalDataLoaded\s*\([^,]+,\s*({.+?})\s*\)\s*;/s)
-        ?? html.match(/window\._sharedData\s*=\s*({.+?});\s*<\/script>/s);
-
-      if (structuredMatch?.[1]) {
-        const payload = JSON.parse(structuredMatch[1]);
-        const result = deepExtractMedia(payload, target.shortcode, target.resourceType);
-        if (result) return result;
-      }
-
-      const videoUrl = sanitizeMediaUrl(
-        html.match(/<meta[^>]+property="og:video(?::url)?"[^>]+content="([^"]+)"/i)?.[1]
-          ?? html.match(/"video_url"\s*:\s*"([^"]+)"/)?.[1],
-      );
-      const imageUrl = sanitizeMediaUrl(
-        html.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)?.[1]
-          ?? html.match(/"display_url"\s*:\s*"([^"]+)"/)?.[1],
-      );
-
-      const items: MediaItem[] = [];
-      const seen = new Set<string>();
-
-      if (videoUrl) {
-        pushMediaItem(items, seen, {
-          url: videoUrl,
-          type: 'video',
-          thumbnail: imageUrl,
-          shortcode: target.shortcode,
-        });
-      }
-
-      if (!items.length && imageUrl) {
-        pushMediaItem(items, seen, {
-          url: imageUrl,
-          type: 'image',
-          thumbnail: imageUrl,
-          shortcode: target.shortcode,
-        });
-      }
-
-      const result = normalizeResult({
-        shortcode: target.shortcode,
-        resourceType: target.resourceType,
-        items,
-        username: sanitizeText(html.match(/"owner_username"\s*:\s*"([^"]+)"/)?.[1]),
-        caption: undefined,
+  const append = (node: any) => {
+    const videoUrl = sanitizeMediaUrl(node?.video_versions?.[0]?.url ?? node?.video_url);
+    const imageUrl = sanitizeMediaUrl(
+      node?.image_versions2?.candidates?.[0]?.url ?? node?.display_url ?? node?.thumbnail_src,
+    );
+    if (videoUrl && !seen.has(videoUrl)) {
+      seen.add(videoUrl);
+      items.push({
+        url: videoUrl,
+        type: 'video',
         thumbnail: imageUrl,
+        filename: buildFilename('video', target.shortcode, items.length, videoUrl),
       });
-
-      if (result) return result;
-    } catch (error) {
-      console.log(`HTML error (${path}):`, error);
+    } else if (imageUrl && !seen.has(imageUrl)) {
+      seen.add(imageUrl);
+      items.push({
+        url: imageUrl,
+        type: 'image',
+        thumbnail: imageUrl,
+        filename: buildFilename('image', target.shortcode, items.length, imageUrl),
+      });
     }
+  };
+
+  const carousel = media?.carousel_media ?? media?.edge_sidecar_to_children?.edges;
+  if (Array.isArray(carousel)) {
+    for (const child of carousel) {
+      append(child?.node ?? child);
+    }
+  } else {
+    append(media);
   }
 
-  return null;
+  if (!items.length) return null;
+
+  return {
+    shortcode: target.shortcode,
+    resourceType: target.resourceType,
+    type: items.length > 1 ? 'carousel' : items[0].type,
+    items,
+    thumbnail: items[0].thumbnail,
+    username: sanitizeText(media?.user?.username ?? media?.owner?.username),
+    caption: sanitizeText(media?.caption?.text ?? media?.edge_media_to_caption?.edges?.[0]?.node?.text),
+  };
 }
 
-async function getInstagramMedia(rawUrl: string): Promise<InstagramMediaResult | null> {
-  const target = extractInstagramTarget(rawUrl);
-  if (!target) return null;
-
-  console.log('Processing Instagram URL:', target.canonicalUrl);
-  console.log('Shortcode:', target.shortcode, '| Type:', target.resourceType);
-
-  return (
-    await fetchViaRapidApiV2(target)
-    ?? await fetchViaRapidApiV3(target)
-    ?? await fetchViaReelsDownloader(target)
-    ?? await fetchViaRapidApi(target)
-    ?? await fetchViaGraphQL(target)
-    ?? await fetchViaInternalApi(target)
-    ?? await fetchViaPublicJson(target)
-    ?? await fetchViaEmbed(target)
-    ?? await fetchViaHtml(target)
-  );
-}
-
+// ============================================================
+// Main handler
+// ============================================================
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
+    return new Response('ok', { headers: corsHeaders });
   }
 
   try {
-    const body = await req.json().catch(() => null);
-    const url = sanitizeText(body?.url);
+    const body = await req.json().catch(() => ({}));
+    const rawUrl = sanitizeText(body?.url);
 
-    if (!url) {
+    if (!rawUrl) {
       return jsonResponse({ success: false, error: 'URL é obrigatória.' }, 400);
     }
 
-    const result = await getInstagramMedia(url);
-
-    if (!result) {
-      return jsonResponse(
-        {
-          success: false,
-          error: 'Não foi possível extrair a mídia. O conteúdo pode ser privado, restrito ou temporariamente indisponível.',
-        },
-        404,
-      );
+    const target = extractInstagramTarget(rawUrl);
+    if (!target) {
+      return jsonResponse({ success: false, error: 'Link do Instagram inválido.' }, 400);
     }
 
-    console.log('Extraction success:', result.items.map((item) => `${item.type}:${item.url.slice(0, 90)}`));
+    if (target.resourceType === 'stories') {
+      return jsonResponse({
+        success: false,
+        error: 'Stories exigem login no Instagram e não são suportados neste método gratuito.',
+      }, 400);
+    }
 
+    console.log(`[start] ${target.resourceType}/${target.shortcode}`);
+
+    // Try embed first (best for public posts/reels)
+    let result = await fetchViaEmbed(target);
+
+    // Fallback to GraphQL if embed didn't return media
+    if (!result) {
+      console.log('[fallback] trying graphql endpoint');
+      result = await fetchViaGraphQL(target);
+    }
+
+    if (!result || !result.items.length) {
+      return jsonResponse({
+        success: false,
+        error: 'Não foi possível extrair a mídia. O post pode ser privado, ter sido removido, ou estar temporariamente indisponível.',
+      }, 404);
+    }
+
+    console.log(`[done] returning ${result.items.length} item(s)`);
+    return jsonResponse({ success: true, ...result });
+  } catch (err) {
+    console.error('[fatal]', err);
     return jsonResponse({
-      success: true,
-      shortcode: result.shortcode,
-      resourceType: result.resourceType,
-      type: result.type,
-      thumbnail: result.thumbnail,
-      username: result.username,
-      caption: result.caption,
-      count: result.items.length,
-      items: result.items,
-    });
-  } catch (error) {
-    console.error('Fatal error:', error);
-    return jsonResponse({ success: false, error: 'Erro interno ao processar o link.' }, 500);
+      success: false,
+      error: err instanceof Error ? err.message : 'Erro inesperado ao processar o link.',
+    }, 500);
   }
 });
