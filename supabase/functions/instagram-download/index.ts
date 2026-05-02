@@ -1,5 +1,6 @@
-// Instagram Downloader - Embed-only strategy (zero external APIs)
-// Uses Instagram's public /embed/ endpoint + GraphQL fallback (no auth needed)
+// Instagram Downloader - RapidAPI cascade strategy
+// Uses 2 RapidAPI providers in cascade for high availability.
+// Public IG endpoints block datacenter IPs, so we MUST go through residential providers.
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -20,7 +21,6 @@ interface InstagramTarget {
   canonicalUrl: string;
   shortcode: string;
   resourceType: ResourceType;
-  storyOwner?: string;
 }
 
 interface InstagramMediaResult {
@@ -33,9 +33,9 @@ interface InstagramMediaResult {
   caption?: string;
 }
 
-// Mobile user-agent works better with embed endpoint
-const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1';
-const DESKTOP_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
+const RAPIDAPI_HOST = Deno.env.get('RAPIDAPI_HOST') ?? '';
+const RAPIDAPI_HOST_V2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -48,24 +48,10 @@ function sanitizeText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&quot;/g, '"')
-    .replace(/&#x2F;/g, '/')
-    .replace(/&#39;/g, "'")
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\\u0026/g, '&')
-    .replace(/\\\//g, '/')
-    .replace(/\\"/g, '"');
-}
-
 function sanitizeMediaUrl(value: unknown): string | undefined {
   const raw = sanitizeText(value);
   if (!raw) return undefined;
-  const cleaned = decodeHtmlEntities(raw);
-  return /^https?:\/\//i.test(cleaned) ? cleaned : undefined;
+  return /^https?:\/\//i.test(raw) ? raw : undefined;
 }
 
 function buildFilename(type: MediaType, shortcode: string, index: number, url: string): string {
@@ -95,12 +81,7 @@ function extractInstagramTarget(rawUrl: string): InstagramTarget | null {
       return { canonicalUrl: `https://www.instagram.com/tv/${segments[1]}/`, shortcode: segments[1], resourceType: 'tv' };
     }
     if (root === 'stories' && segments[1] && segments[2]) {
-      return {
-        canonicalUrl: `https://www.instagram.com/stories/${segments[1]}/${segments[2]}/`,
-        shortcode: segments[2],
-        resourceType: 'stories',
-        storyOwner: segments[1],
-      };
+      return { canonicalUrl: `https://www.instagram.com/stories/${segments[1]}/${segments[2]}/`, shortcode: segments[2], resourceType: 'stories' };
     }
     return null;
   } catch {
@@ -108,7 +89,7 @@ function extractInstagramTarget(rawUrl: string): InstagramTarget | null {
   }
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 20000): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 25000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
   try {
@@ -119,135 +100,169 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs =
 }
 
 // ============================================================
-// STRATEGY 1: Instagram embed page (public, no auth)
-// URL: https://www.instagram.com/p/{shortcode}/embed/captioned/
-// Returns HTML containing video_url / display_url in JSON blob
+// Generic RapidAPI request helper
 // ============================================================
-async function fetchViaEmbed(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  if (target.resourceType === 'stories') return null; // stories require login
+async function callRapidApi(host: string, path: string, params: Record<string, string>): Promise<any | null> {
+  if (!RAPIDAPI_KEY || !host) return null;
+  const url = new URL(`https://${host}${path}`);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
 
-  const paths = target.resourceType === 'reel'
-    ? [`reel/${target.shortcode}`, `p/${target.shortcode}`]
-    : target.resourceType === 'tv'
-    ? [`tv/${target.shortcode}`, `p/${target.shortcode}`]
-    : [`p/${target.shortcode}`];
-
-  for (const path of paths) {
-    const embedUrl = `https://www.instagram.com/${path}/embed/captioned/`;
-    try {
-      const res = await fetchWithTimeout(embedUrl, {
-        headers: {
-          'User-Agent': MOBILE_UA,
-          'Accept': 'text/html,application/xhtml+xml',
-          'Accept-Language': 'en-US,en;q=0.9',
-        },
-      });
-
-      if (!res.ok) {
-        console.log(`[embed] ${path} -> HTTP ${res.status}`);
-        continue;
-      }
-
-      const html = await res.text();
-      const result = parseEmbedHtml(html, target);
-      if (result) {
-        console.log(`[embed] success for ${path}: ${result.items.length} item(s)`);
-        return result;
-      }
-      console.log(`[embed] ${path} -> no media parsed`);
-    } catch (err) {
-      console.log(`[embed] ${path} -> error`, err);
+  try {
+    const res = await fetchWithTimeout(url.toString(), {
+      headers: {
+        'X-RapidAPI-Key': RAPIDAPI_KEY,
+        'X-RapidAPI-Host': host,
+        'Accept': 'application/json',
+      },
+    });
+    if (!res.ok) {
+      console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status}`);
+      return null;
     }
+    return await res.json();
+  } catch (err) {
+    console.log(`[rapidapi:${host}] ${path} -> error`, err);
+    return null;
   }
-  return null;
 }
 
-function parseEmbedHtml(html: string, target: InstagramTarget): InstagramMediaResult | null {
+// ============================================================
+// Universal parser - tries every common shape returned by IG-downloader RapidAPIs
+// ============================================================
+function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMediaResult | null {
+  if (!data || typeof data !== 'object') return null;
+
   const items: MediaItem[] = [];
   const seen = new Set<string>();
+  let username: string | undefined;
+  let caption: string | undefined;
+  let topThumb: string | undefined;
 
-  // Try to find embedded JSON in window.__additionalDataLoaded or similar
-  const jsonMatches = [
-    ...html.matchAll(/"video_url":"([^"]+)"/g),
-    ...html.matchAll(/"video_versions":\s*\[\s*{[^}]*"url":"([^"]+)"/g),
-  ];
-  const imageMatches = [
-    ...html.matchAll(/"display_url":"([^"]+)"/g),
-    ...html.matchAll(/"image_versions2":\s*{\s*"candidates":\s*\[\s*{[^}]*"url":"([^"]+)"/g),
-  ];
+  const pushItem = (rawUrl: unknown, type: MediaType, thumb?: unknown) => {
+    const url = sanitizeMediaUrl(rawUrl);
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const thumbnail = sanitizeMediaUrl(thumb);
+    items.push({
+      url,
+      type,
+      thumbnail: thumbnail ?? (type === 'image' ? url : undefined),
+      filename: buildFilename(type, target.shortcode, items.length, url),
+    });
+  };
 
-  // Parse <img class="EmbeddedMediaImage"> as fallback
-  const imgTagMatch = html.match(/class="EmbeddedMediaImage"[^>]*src="([^"]+)"/i)
-    ?? html.match(/<img[^>]+class="[^"]*EmbeddedMedia[^"]*"[^>]+src="([^"]+)"/i);
+  const handleNode = (node: any) => {
+    if (!node || typeof node !== 'object') return;
 
-  // Parse <video src="...">
-  const videoTagMatches = [...html.matchAll(/<video[^>]+src="([^"]+)"/gi)];
+    // Common video URL fields
+    const videoCandidates = [
+      node.video_url,
+      node.videoUrl,
+      node.video,
+      node.url_video,
+      node.video_versions?.[0]?.url,
+      node.videoVersions?.[0]?.url,
+      node.video_dash_manifest && node.playable_url,
+      node.playable_url,
+      node.playable_url_quality_hd,
+    ];
 
-  // Username/caption
-  const username = sanitizeText(html.match(/"username":"([^"]+)"/)?.[1])
-    ?? sanitizeText(html.match(/UsernameText[^>]*>([^<]+)</)?.[1]);
+    // Common image URL fields
+    const imageCandidates = [
+      node.display_url,
+      node.displayUrl,
+      node.image_url,
+      node.imageUrl,
+      node.thumbnail_url,
+      node.thumbnail_src,
+      node.image_versions2?.candidates?.[0]?.url,
+      node.imageVersions2?.candidates?.[0]?.url,
+      node.image,
+    ];
 
-  const caption = sanitizeText(html.match(/"caption":"([^"]+)"/)?.[1]);
+    const thumb = imageCandidates.find((v) => sanitizeMediaUrl(v));
+    if (!topThumb) topThumb = sanitizeMediaUrl(thumb);
 
-  // Collect videos first
-  for (const m of jsonMatches) {
-    const url = sanitizeMediaUrl(m[1]);
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      items.push({
-        url,
-        type: 'video',
-        filename: buildFilename('video', target.shortcode, items.length, url),
-      });
+    const videoUrl = videoCandidates.find((v) => sanitizeMediaUrl(v));
+
+    // Determine if this node is a video
+    const isVideo = !!videoUrl
+      || node.is_video === true
+      || node.media_type === 2
+      || node.mediaType === 2
+      || node.type === 'video'
+      || node.type === 'GraphVideo';
+
+    if (isVideo && videoUrl) {
+      pushItem(videoUrl, 'video', thumb);
+    } else if (thumb) {
+      pushItem(thumb, 'image');
     }
-  }
-  for (const m of videoTagMatches) {
-    const url = sanitizeMediaUrl(m[1]);
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      items.push({
-        url,
-        type: 'video',
-        filename: buildFilename('video', target.shortcode, items.length, url),
-      });
-    }
-  }
+  };
 
-  // Collect images (only if no video found, OR for carousels)
-  if (items.length === 0) {
-    for (const m of imageMatches) {
-      const url = sanitizeMediaUrl(m[1]);
-      if (url && !seen.has(url)) {
-        seen.add(url);
-        items.push({
-          url,
-          type: 'image',
-          thumbnail: url,
-          filename: buildFilename('image', target.shortcode, items.length, url),
-        });
+  // Username & caption (try many shapes)
+  username = sanitizeText(
+    data.username
+    ?? data.user?.username
+    ?? data.owner?.username
+    ?? data.author?.username
+    ?? data.data?.user?.username
+    ?? data.data?.owner?.username,
+  );
+  caption = sanitizeText(
+    data.caption
+    ?? data.title
+    ?? data.description
+    ?? data.caption?.text
+    ?? data.edge_media_to_caption?.edges?.[0]?.node?.text
+    ?? data.data?.caption
+    ?? data.data?.title,
+  );
+
+  // Carousel candidates
+  const carouselCandidates = [
+    data.carousel_media,
+    data.carouselMedia,
+    data.children,
+    data.items,
+    data.medias,
+    data.media,
+    data.edge_sidecar_to_children?.edges,
+    data.data?.carousel_media,
+    data.data?.children,
+    data.data?.items,
+    data.data?.medias,
+    data.data?.media,
+  ];
+
+  let processed = false;
+  for (const c of carouselCandidates) {
+    if (Array.isArray(c) && c.length > 0) {
+      for (const child of c) {
+        handleNode(child?.node ?? child);
+      }
+      if (items.length > 0) {
+        processed = true;
+        break;
       }
     }
+  }
 
-    if (items.length === 0 && imgTagMatch) {
-      const url = sanitizeMediaUrl(imgTagMatch[1]);
-      if (url) {
-        items.push({
-          url,
-          type: 'image',
-          thumbnail: url,
-          filename: buildFilename('image', target.shortcode, 0, url),
-        });
-      }
-    }
+  // Single media fallback
+  if (!processed) {
+    handleNode(data);
+    handleNode(data.data);
+    handleNode(data.result);
+    handleNode(data.media);
+    handleNode(data.graphql?.shortcode_media);
   }
 
   if (!items.length) return null;
 
-  // Set thumbnail for videos
-  const firstImage = imageMatches[0]?.[1] ? sanitizeMediaUrl(imageMatches[0][1]) : undefined;
+  // Backfill thumbnails for videos
   for (const item of items) {
     if (item.type === 'video' && !item.thumbnail) {
-      item.thumbnail = firstImage;
+      item.thumbnail = topThumb;
     }
   }
 
@@ -256,102 +271,69 @@ function parseEmbedHtml(html: string, target: InstagramTarget): InstagramMediaRe
     resourceType: target.resourceType,
     type: items.length > 1 ? 'carousel' : items[0].type,
     items,
-    thumbnail: firstImage ?? items[0].thumbnail,
+    thumbnail: topThumb ?? items[0].thumbnail,
     username,
     caption,
   };
 }
 
 // ============================================================
-// STRATEGY 2: Public GraphQL endpoint (no auth, fallback)
-// Some posts (carousels, certain reels) work better here
+// Provider 1: RAPIDAPI_HOST (primary)
+// Tries the most common path conventions used by IG-downloader APIs.
 // ============================================================
-async function fetchViaGraphQL(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  if (target.resourceType === 'stories') return null;
+async function fetchViaRapidApiPrimary(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (!RAPIDAPI_HOST) return null;
 
-  const url = `https://www.instagram.com/api/v1/media/shortcode/${target.shortcode}/`;
-  // Note: this often requires X-IG-App-ID; we try the web profile endpoint instead.
+  const attempts: Array<{ path: string; params: Record<string, string> }> = [
+    { path: '/index', params: { url: target.canonicalUrl } },
+    { path: '/', params: { url: target.canonicalUrl } },
+    { path: '/get-info', params: { url: target.canonicalUrl } },
+    { path: '/get_info', params: { url: target.canonicalUrl } },
+    { path: '/post', params: { shortcode: target.shortcode } },
+    { path: '/media', params: { shortcode: target.shortcode } },
+    { path: '/instagram', params: { url: target.canonicalUrl } },
+    { path: `/post/${target.shortcode}`, params: {} },
+  ];
 
-  // Use the documented "?__a=1&__d=dis" trick (works intermittently on /p/{code}/)
-  const tryUrl = `https://www.instagram.com/p/${target.shortcode}/?__a=1&__d=dis`;
-  try {
-    const res = await fetchWithTimeout(tryUrl, {
-      headers: {
-        'User-Agent': DESKTOP_UA,
-        'Accept': 'application/json,text/html',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'X-IG-App-ID': '936619743392459',
-        'X-Requested-With': 'XMLHttpRequest',
-      },
-    });
-
-    if (!res.ok) {
-      console.log(`[graphql] HTTP ${res.status}`);
-      return null;
+  for (const a of attempts) {
+    const data = await callRapidApi(RAPIDAPI_HOST, a.path, a.params);
+    if (!data) continue;
+    const result = parseRapidApiResponse(data, target);
+    if (result) {
+      console.log(`[primary] success via ${a.path}: ${result.items.length} item(s)`);
+      return result;
     }
-
-    const text = await res.text();
-    let data: any;
-    try { data = JSON.parse(text); } catch { return null; }
-
-    const media = data?.items?.[0] ?? data?.graphql?.shortcode_media;
-    if (!media) return null;
-
-    return parseGraphQLMedia(media, target);
-  } catch (err) {
-    console.log('[graphql] error', err);
-    return null;
   }
+  return null;
 }
 
-function parseGraphQLMedia(media: any, target: InstagramTarget): InstagramMediaResult | null {
-  const items: MediaItem[] = [];
-  const seen = new Set<string>();
+// ============================================================
+// Provider 2: RAPIDAPI_HOST_V2 (fallback)
+// ============================================================
+async function fetchViaRapidApiSecondary(target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (!RAPIDAPI_HOST_V2) return null;
 
-  const append = (node: any) => {
-    const videoUrl = sanitizeMediaUrl(node?.video_versions?.[0]?.url ?? node?.video_url);
-    const imageUrl = sanitizeMediaUrl(
-      node?.image_versions2?.candidates?.[0]?.url ?? node?.display_url ?? node?.thumbnail_src,
-    );
-    if (videoUrl && !seen.has(videoUrl)) {
-      seen.add(videoUrl);
-      items.push({
-        url: videoUrl,
-        type: 'video',
-        thumbnail: imageUrl,
-        filename: buildFilename('video', target.shortcode, items.length, videoUrl),
-      });
-    } else if (imageUrl && !seen.has(imageUrl)) {
-      seen.add(imageUrl);
-      items.push({
-        url: imageUrl,
-        type: 'image',
-        thumbnail: imageUrl,
-        filename: buildFilename('image', target.shortcode, items.length, imageUrl),
-      });
-    }
-  };
+  const attempts: Array<{ path: string; params: Record<string, string> }> = [
+    { path: '/index', params: { url: target.canonicalUrl } },
+    { path: '/', params: { url: target.canonicalUrl } },
+    { path: '/get-info', params: { url: target.canonicalUrl } },
+    { path: '/get_info', params: { url: target.canonicalUrl } },
+    { path: '/instagram', params: { url: target.canonicalUrl } },
+    { path: '/post', params: { shortcode: target.shortcode } },
+    { path: `/post/${target.shortcode}`, params: {} },
+    { path: '/media', params: { shortcode: target.shortcode } },
+  ];
 
-  const carousel = media?.carousel_media ?? media?.edge_sidecar_to_children?.edges;
-  if (Array.isArray(carousel)) {
-    for (const child of carousel) {
-      append(child?.node ?? child);
+  for (const a of attempts) {
+    const data = await callRapidApi(RAPIDAPI_HOST_V2, a.path, a.params);
+    if (!data) continue;
+    const result = parseRapidApiResponse(data, target);
+    if (result) {
+      console.log(`[secondary] success via ${a.path}: ${result.items.length} item(s)`);
+      return result;
     }
-  } else {
-    append(media);
   }
-
-  if (!items.length) return null;
-
-  return {
-    shortcode: target.shortcode,
-    resourceType: target.resourceType,
-    type: items.length > 1 ? 'carousel' : items[0].type,
-    items,
-    thumbnail: items[0].thumbnail,
-    username: sanitizeText(media?.user?.username ?? media?.owner?.username),
-    caption: sanitizeText(media?.caption?.text ?? media?.edge_media_to_caption?.edges?.[0]?.node?.text),
-  };
+  return null;
 }
 
 // ============================================================
@@ -370,6 +352,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: 'URL é obrigatória.' }, 400);
     }
 
+    if (!RAPIDAPI_KEY || (!RAPIDAPI_HOST && !RAPIDAPI_HOST_V2)) {
+      return jsonResponse({
+        success: false,
+        error: 'Serviço não configurado. Entre em contato com o suporte.',
+      }, 500);
+    }
+
     const target = extractInstagramTarget(rawUrl);
     if (!target) {
       return jsonResponse({ success: false, error: 'Link do Instagram inválido.' }, 400);
@@ -378,19 +367,17 @@ Deno.serve(async (req) => {
     if (target.resourceType === 'stories') {
       return jsonResponse({
         success: false,
-        error: 'Stories exigem login no Instagram e não são suportados neste método gratuito.',
+        error: 'Stories ainda não são suportados. Use o link de um post (P), reel ou IGTV.',
       }, 400);
     }
 
     console.log(`[start] ${target.resourceType}/${target.shortcode}`);
 
-    // Try embed first (best for public posts/reels)
-    let result = await fetchViaEmbed(target);
-
-    // Fallback to GraphQL if embed didn't return media
+    // Try primary, then secondary
+    let result = await fetchViaRapidApiPrimary(target);
     if (!result) {
-      console.log('[fallback] trying graphql endpoint');
-      result = await fetchViaGraphQL(target);
+      console.log('[fallback] trying secondary RapidAPI host');
+      result = await fetchViaRapidApiSecondary(target);
     }
 
     if (!result || !result.items.length) {
