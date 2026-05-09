@@ -296,7 +296,8 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
   const url = target.canonicalUrl;
   const sc = target.shortcode;
   return [
-    // instagram-downloader-download-instagram-stories-videos4
+    // instagram-downloader-download-instagram-stories-videos4 (Glavier) — confirmed
+    { path: '/convert', params: { url } },
     { path: '/index', params: { url } },
     // instagram-downloader-scraper-reels-igtv-posts-stories (ntkz)
     { path: '/api/v1/post', params: { url, link: url } },
