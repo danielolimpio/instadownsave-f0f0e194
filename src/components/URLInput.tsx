@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, ClipboardPaste, Download, Loader2, Image, Film, X, Trash2 } from "lucide-react";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -9,6 +10,26 @@ interface MediaItem {
   thumbnail?: string;
   filename: string;
 }
+
+const getInvokeErrorMessage = async (error: unknown) => {
+  if (error instanceof FunctionsHttpError && error.context instanceof Response) {
+    try {
+      const payload = await error.context.clone().json();
+      if (payload && typeof payload === "object" && typeof payload.error === "string") {
+        return payload.error;
+      }
+    } catch {
+      try {
+        const text = await error.context.clone().text();
+        if (text.trim()) return text;
+      } catch {
+        return error.message;
+      }
+    }
+  }
+
+  return error instanceof Error ? error.message : "Erro ao processar o link. Tente novamente.";
+};
 
 const URLInput = () => {
   const [url, setUrl] = useState("");
@@ -56,7 +77,7 @@ const URLInput = () => {
       });
 
       if (error) {
-        throw new Error(error.message || "Erro ao processar o link.");
+        throw error;
       }
 
       if (!data?.success || !data?.items?.length) {
@@ -65,9 +86,9 @@ const URLInput = () => {
 
       setMediaItems(data.items);
       toast.success(`${data.items.length} arquivo(s) encontrado(s)!`);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error:", err);
-      toast.error(err.message || "Erro ao processar o link. Tente novamente.");
+      toast.error(await getInvokeErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -81,7 +102,7 @@ const URLInput = () => {
         body: { url: item.url, filename: item.filename },
       });
 
-      if (error) throw new Error("Erro ao baixar o arquivo.");
+      if (error) throw error;
 
       const blob = data instanceof Blob ? data : new Blob([data]);
       const blobUrl = URL.createObjectURL(blob);
@@ -94,9 +115,9 @@ const URLInput = () => {
       URL.revokeObjectURL(blobUrl);
 
       toast.success("Download iniciado!");
-    } catch (err: any) {
+    } catch (err) {
       console.error("Download error:", err);
-      toast.error(err.message || "Erro ao baixar. Tente novamente.");
+      toast.error(await getInvokeErrorMessage(err));
     } finally {
       setDownloading((prev) => ({ ...prev, [index]: false }));
     }
