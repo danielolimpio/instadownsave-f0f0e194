@@ -77,7 +77,7 @@ const URLInput = () => {
       });
 
       if (error) {
-        throw new Error(error.message || "Erro ao processar o link.");
+        throw error;
       }
 
       if (!data?.success || !data?.items?.length) {
@@ -102,7 +102,7 @@ const URLInput = () => {
         body: { url: item.url, filename: item.filename },
       });
 
-      if (error) throw new Error("Erro ao baixar o arquivo.");
+      if (error) throw error;
 
       const blob = data instanceof Blob ? data : new Blob([data]);
       const blobUrl = URL.createObjectURL(blob);
@@ -115,9 +115,9 @@ const URLInput = () => {
       URL.revokeObjectURL(blobUrl);
 
       toast.success("Download iniciado!");
-    } catch (err: any) {
+    } catch (err) {
       console.error("Download error:", err);
-      toast.error(err.message || "Erro ao baixar. Tente novamente.");
+      toast.error(await getInvokeErrorMessage(err));
     } finally {
       setDownloading((prev) => ({ ...prev, [index]: false }));
     }
