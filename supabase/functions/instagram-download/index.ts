@@ -141,11 +141,24 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
         'Accept': 'application/json',
       },
     });
-    const text = await res.text();
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
     if (!res.ok) {
+      const text = await res.text();
       console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status} body=${text.slice(0,200)}`);
       return null;
     }
+
+    if (contentType.startsWith('video/') || contentType.startsWith('image/') || contentType.includes('octet-stream')) {
+      console.log(`[rapidapi:${host}] ${path} -> 200 media content-type=${contentType} finalUrl=${res.url}`);
+      return {
+        result: [{
+          url: res.url,
+          type: contentType.startsWith('video/') ? 'video' : 'image',
+        }],
+      };
+    }
+
+    const text = await res.text();
     console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { return null; }
@@ -185,6 +198,14 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
     });
   };
 
+  const handleCollection = (value: unknown) => {
+    if (!Array.isArray(value) || value.length === 0) return false;
+    for (const child of value) {
+      handleNode(child?.node ?? child);
+    }
+    return items.length > 0;
+  };
+
   const handleNode = (node: any) => {
     if (!node || typeof node !== 'object') return;
 
@@ -194,6 +215,9 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       node.videoUrl,
       node.video,
       node.url_video,
+      node.download_url,
+      node.downloadUrl,
+      node.src,
       node.video_versions?.[0]?.url,
       node.videoVersions?.[0]?.url,
       node.video_dash_manifest && node.playable_url,
@@ -207,6 +231,7 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       node.displayUrl,
       node.image_url,
       node.imageUrl,
+      node.thumbnail,
       node.thumbnail_url,
       node.thumbnail_src,
       node.image_versions2?.candidates?.[0]?.url,
@@ -228,9 +253,18 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       || node.type === 'GraphVideo';
 
     // Direct shape: { type: "image"|"video", url, thumbnail } (used by /convert)
-    const directUrl = sanitizeMediaUrl(node.url);
-    if (directUrl && (node.type === 'image' || node.type === 'video') && !videoUrl) {
-      pushItem(directUrl, node.type === 'video' ? 'video' : 'image', node.thumbnail ?? thumb);
+    const directUrl = sanitizeMediaUrl(node.url ?? node.link ?? node.href ?? node.download_url ?? node.downloadUrl);
+    const normalizedType = typeof node.type === 'string' ? node.type.toLowerCase() : '';
+    const directType: MediaType | null = directUrl
+      ? normalizedType === 'video' || normalizedType === 'mp4' || /\.(mp4|m4v|mov)(?:$|\?)/i.test(directUrl) || node.is_video === true || node.media_type === 2
+        ? 'video'
+        : normalizedType === 'image' || normalizedType === 'photo' || /\.(jpe?g|png|webp)(?:$|\?)/i.test(directUrl)
+          ? 'image'
+          : null
+      : null;
+
+    if (directUrl && directType && !videoUrl) {
+      pushItem(directUrl, directType, node.thumbnail ?? thumb);
       return;
     }
 
@@ -270,30 +304,31 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
 
   // Carousel candidates
   const carouselCandidates = [
+    Array.isArray(data) ? data : null,
     data.carousel_media,
     data.carouselMedia,
     data.children,
     data.items,
     data.medias,
     data.media,
+    data.result,
+    data.results,
+    data.data,
     data.edge_sidecar_to_children?.edges,
     data.data?.carousel_media,
     data.data?.children,
     data.data?.items,
     data.data?.medias,
     data.data?.media,
+    data.data?.result,
+    data.data?.results,
   ];
 
   let processed = false;
   for (const c of carouselCandidates) {
-    if (Array.isArray(c) && c.length > 0) {
-      for (const child of c) {
-        handleNode(child?.node ?? child);
-      }
-      if (items.length > 0) {
-        processed = true;
-        break;
-      }
+    if (handleCollection(c)) {
+      processed = true;
+      break;
     }
   }
 

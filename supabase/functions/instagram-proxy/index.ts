@@ -3,6 +3,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -20,13 +22,28 @@ Deno.serve(async (req) => {
 
     console.log('Proxying media URL:', url.substring(0, 100) + '...');
 
+    const parsedUrl = new URL(url);
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Referer': 'https://www.instagram.com/',
+      'Origin': 'https://www.instagram.com',
+    };
+
+    if (parsedUrl.hostname.includes('rapidapi.com')) {
+      if (!RAPIDAPI_KEY) {
+        return new Response(
+          JSON.stringify({ success: false, error: 'Serviço de download não configurado.' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      headers['X-RapidAPI-Key'] = RAPIDAPI_KEY;
+      headers['X-RapidAPI-Host'] = parsedUrl.hostname;
+    }
+
     const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': '*/*',
-        'Referer': 'https://www.instagram.com/',
-        'Origin': 'https://www.instagram.com',
-      },
+      headers,
       redirect: 'follow',
     });
 
