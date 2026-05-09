@@ -34,8 +34,14 @@ interface InstagramMediaResult {
 }
 
 const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
-const RAPIDAPI_HOST = Deno.env.get('RAPIDAPI_HOST') ?? '';
-const RAPIDAPI_HOST_V2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
+// Only accept hosts that look like a real RapidAPI hostname.
+const isValidHost = (h: string) => h.includes('.') && h.includes('rapidapi');
+const ENV_HOST_1 = Deno.env.get('RAPIDAPI_HOST') ?? '';
+const ENV_HOST_2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
+const RAPIDAPI_HOST = isValidHost(ENV_HOST_1)
+  ? ENV_HOST_1
+  : 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
+const RAPIDAPI_HOST_V2 = isValidHost(ENV_HOST_2) ? ENV_HOST_2 : '';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
