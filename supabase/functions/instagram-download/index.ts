@@ -42,9 +42,7 @@ const RAPIDAPI_HOST = isValidHost(ENV_HOST_1)
   : 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
 const RAPIDAPI_HOST_V2 = isValidHost(ENV_HOST_2) && ENV_HOST_2 !== RAPIDAPI_HOST
   ? ENV_HOST_2
-  : (RAPIDAPI_HOST !== 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
-      ? 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
-      : '');
+  : 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
