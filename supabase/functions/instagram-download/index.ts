@@ -42,9 +42,7 @@ const RAPIDAPI_HOST = isValidHost(ENV_HOST_1)
   : 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
 const RAPIDAPI_HOST_V2 = isValidHost(ENV_HOST_2) && ENV_HOST_2 !== RAPIDAPI_HOST
   ? ENV_HOST_2
-  : (RAPIDAPI_HOST !== 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
-      ? 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
-      : '');
+  : 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -130,7 +128,13 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
       return null;
     }
     console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
-    try { return JSON.parse(text); } catch { return null; }
+    let parsed: any;
+    try { parsed = JSON.parse(text); } catch { return null; }
+    // Some providers return HTTP 200 with an error field — treat as failure
+    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string' && !parsed.media && !parsed.items) {
+      return null;
+    }
+    return parsed;
   } catch (err) {
     console.log(`[rapidapi:${host}] ${path} -> error`, err);
     return null;
@@ -208,6 +212,14 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
     const directUrl = sanitizeMediaUrl(node.url);
     if (directUrl && (node.type === 'image' || node.type === 'video') && !videoUrl) {
       pushItem(directUrl, node.type === 'video' ? 'video' : 'image', node.thumbnail ?? thumb);
+      return;
+    }
+
+    // Shape: { Type: "Image"|"Video", media: "url", thumbnail } (used by /index on videos-stories host)
+    const mediaStr = sanitizeMediaUrl(node.media);
+    const capType = typeof node.Type === 'string' ? node.Type.toLowerCase() : '';
+    if (mediaStr && (capType === 'image' || capType === 'video')) {
+      pushItem(mediaStr, capType === 'video' ? 'video' : 'image', node.thumbnail ?? thumb);
       return;
     }
 
