@@ -128,7 +128,13 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
       return null;
     }
     console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
-    try { return JSON.parse(text); } catch { return null; }
+    let parsed: any;
+    try { parsed = JSON.parse(text); } catch { return null; }
+    // Some providers return HTTP 200 with an error field — treat as failure
+    if (parsed && typeof parsed === 'object' && typeof parsed.error === 'string' && !parsed.media && !parsed.items) {
+      return null;
+    }
+    return parsed;
   } catch (err) {
     console.log(`[rapidapi:${host}] ${path} -> error`, err);
     return null;
