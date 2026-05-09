@@ -399,7 +399,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: 'URL é obrigatória.' }, 400);
     }
 
-    if (!RAPIDAPI_KEY || (!RAPIDAPI_HOST && !RAPIDAPI_HOST_V2)) {
+    if (!RAPIDAPI_KEY || ALL_HOSTS.length === 0) {
       return jsonResponse({
         success: false,
         error: 'Serviço não configurado. Entre em contato com o suporte.',
@@ -418,13 +418,14 @@ Deno.serve(async (req) => {
       }, 400);
     }
 
-    console.log(`[start] ${target.resourceType}/${target.shortcode}`);
+    console.log(`[start] ${target.resourceType}/${target.shortcode} hosts=${ALL_HOSTS.length}`);
 
-    // Try primary, then secondary
-    let result = await fetchViaRapidApiPrimary(target);
-    if (!result) {
-      console.log('[fallback] trying secondary RapidAPI host');
-      result = await fetchViaRapidApiSecondary(target);
+    let result: InstagramMediaResult | null = null;
+    for (let i = 0; i < ALL_HOSTS.length; i++) {
+      const label = i === 0 ? 'primary' : `fallback-${i}`;
+      if (i > 0) console.log(`[fallback] trying host #${i + 1}: ${ALL_HOSTS[i]}`);
+      result = await fetchViaRapidApiHost(ALL_HOSTS[i], label, target);
+      if (result) break;
     }
 
     if (!result || !result.items.length) {
