@@ -37,12 +37,31 @@ const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
 const isValidHost = (h: string) => h.includes('.') && h.includes('rapidapi');
 const ENV_HOST_1 = Deno.env.get('RAPIDAPI_HOST') ?? '';
 const ENV_HOST_2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
-const RAPIDAPI_HOST = isValidHost(ENV_HOST_1)
-  ? ENV_HOST_1
-  : 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
-const RAPIDAPI_HOST_V2 = isValidHost(ENV_HOST_2) && ENV_HOST_2 !== RAPIDAPI_HOST
-  ? ENV_HOST_2
-  : 'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com';
+const ENV_HOST_3 = Deno.env.get('RAPIDAPI_HOST_V3') ?? '';
+const ENV_HOST_4 = Deno.env.get('RAPIDAPI_HOST_V4') ?? '';
+const ENV_HOST_5 = Deno.env.get('RAPIDAPI_HOST_V5') ?? '';
+
+const DEFAULTS = [
+  'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com',
+  'instagram-downloader-download-instagram-videos-stories.p.rapidapi.com',
+  'instagram-downloader38.p.rapidapi.com',
+  'instagram-downloader-scraper-reels-igtv-posts-stories.p.rapidapi.com',
+  'instagram-post-reels-stories-downloader-api.p.rapidapi.com',
+];
+
+const pickHost = (env: string, fallback: string, used: Set<string>) => {
+  const chosen = isValidHost(env) ? env : fallback;
+  if (used.has(chosen)) return '';
+  used.add(chosen);
+  return chosen;
+};
+const _used = new Set<string>();
+const RAPIDAPI_HOST = pickHost(ENV_HOST_1, DEFAULTS[0], _used);
+const RAPIDAPI_HOST_V2 = pickHost(ENV_HOST_2, DEFAULTS[1], _used);
+const RAPIDAPI_HOST_V3 = pickHost(ENV_HOST_3, DEFAULTS[2], _used);
+const RAPIDAPI_HOST_V4 = pickHost(ENV_HOST_4, DEFAULTS[3], _used);
+const RAPIDAPI_HOST_V5 = pickHost(ENV_HOST_5, DEFAULTS[4], _used);
+const ALL_HOSTS = [RAPIDAPI_HOST, RAPIDAPI_HOST_V2, RAPIDAPI_HOST_V3, RAPIDAPI_HOST_V4, RAPIDAPI_HOST_V5].filter(Boolean);
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -380,7 +399,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ success: false, error: 'URL é obrigatória.' }, 400);
     }
 
-    if (!RAPIDAPI_KEY || (!RAPIDAPI_HOST && !RAPIDAPI_HOST_V2)) {
+    if (!RAPIDAPI_KEY || ALL_HOSTS.length === 0) {
       return jsonResponse({
         success: false,
         error: 'Serviço não configurado. Entre em contato com o suporte.',
@@ -399,13 +418,14 @@ Deno.serve(async (req) => {
       }, 400);
     }
 
-    console.log(`[start] ${target.resourceType}/${target.shortcode}`);
+    console.log(`[start] ${target.resourceType}/${target.shortcode} hosts=${ALL_HOSTS.length}`);
 
-    // Try primary, then secondary
-    let result = await fetchViaRapidApiPrimary(target);
-    if (!result) {
-      console.log('[fallback] trying secondary RapidAPI host');
-      result = await fetchViaRapidApiSecondary(target);
+    let result: InstagramMediaResult | null = null;
+    for (let i = 0; i < ALL_HOSTS.length; i++) {
+      const label = i === 0 ? 'primary' : `fallback-${i}`;
+      if (i > 0) console.log(`[fallback] trying host #${i + 1}: ${ALL_HOSTS[i]}`);
+      result = await fetchViaRapidApiHost(ALL_HOSTS[i], label, target);
+      if (result) break;
     }
 
     if (!result || !result.items.length) {
