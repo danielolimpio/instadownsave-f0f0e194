@@ -215,6 +215,14 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       return;
     }
 
+    // Shape: { Type: "Image"|"Video", media: "url", thumbnail } (used by /index on videos-stories host)
+    const mediaStr = sanitizeMediaUrl(node.media);
+    const capType = typeof node.Type === 'string' ? node.Type.toLowerCase() : '';
+    if (mediaStr && (capType === 'image' || capType === 'video')) {
+      pushItem(mediaStr, capType === 'video' ? 'video' : 'image', node.thumbnail ?? thumb);
+      return;
+    }
+
     if (isVideo && videoUrl) {
       pushItem(videoUrl, 'video', thumb);
     } else if (thumb) {
