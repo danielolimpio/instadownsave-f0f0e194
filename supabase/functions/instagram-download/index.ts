@@ -204,6 +204,13 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       || node.type === 'video'
       || node.type === 'GraphVideo';
 
+    // Direct shape: { type: "image"|"video", url, thumbnail } (used by /convert)
+    const directUrl = sanitizeMediaUrl(node.url);
+    if (directUrl && (node.type === 'image' || node.type === 'video') && !videoUrl) {
+      pushItem(directUrl, node.type === 'video' ? 'video' : 'image', node.thumbnail ?? thumb);
+      return;
+    }
+
     if (isVideo && videoUrl) {
       pushItem(videoUrl, 'video', thumb);
     } else if (thumb) {
@@ -296,7 +303,8 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
   const url = target.canonicalUrl;
   const sc = target.shortcode;
   return [
-    // instagram-downloader-download-instagram-stories-videos4
+    // instagram-downloader-download-instagram-stories-videos4 (Glavier) — confirmed
+    { path: '/convert', params: { url } },
     { path: '/index', params: { url } },
     // instagram-downloader-scraper-reels-igtv-posts-stories (ntkz)
     { path: '/api/v1/post', params: { url, link: url } },
