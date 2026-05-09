@@ -115,11 +115,13 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
         'Accept': 'application/json',
       },
     });
+    const text = await res.text();
     if (!res.ok) {
-      console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status}`);
+      console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status} body=${text.slice(0,200)}`);
       return null;
     }
-    return await res.json();
+    console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
+    try { return JSON.parse(text); } catch { return null; }
   } catch (err) {
     console.log(`[rapidapi:${host}] ${path} -> error`, err);
     return null;
