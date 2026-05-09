@@ -34,8 +34,17 @@ interface InstagramMediaResult {
 }
 
 const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
-const RAPIDAPI_HOST = Deno.env.get('RAPIDAPI_HOST') ?? '';
-const RAPIDAPI_HOST_V2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
+const isValidHost = (h: string) => h.includes('.') && h.includes('rapidapi');
+const ENV_HOST_1 = Deno.env.get('RAPIDAPI_HOST') ?? '';
+const ENV_HOST_2 = Deno.env.get('RAPIDAPI_HOST_V2') ?? '';
+const RAPIDAPI_HOST = isValidHost(ENV_HOST_1)
+  ? ENV_HOST_1
+  : 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com';
+const RAPIDAPI_HOST_V2 = isValidHost(ENV_HOST_2) && ENV_HOST_2 !== RAPIDAPI_HOST
+  ? ENV_HOST_2
+  : (RAPIDAPI_HOST !== 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
+      ? 'instagram-downloader-download-instagram-stories-videos4.p.rapidapi.com'
+      : '');
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -115,11 +124,13 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
         'Accept': 'application/json',
       },
     });
+    const text = await res.text();
     if (!res.ok) {
-      console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status}`);
+      console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status} body=${text.slice(0,200)}`);
       return null;
     }
-    return await res.json();
+    console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
+    try { return JSON.parse(text); } catch { return null; }
   } catch (err) {
     console.log(`[rapidapi:${host}] ${path} -> error`, err);
     return null;
@@ -281,63 +292,60 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
 // Provider 1: RAPIDAPI_HOST (primary)
 // Tries the most common path conventions used by IG-downloader APIs.
 // ============================================================
-async function fetchViaRapidApiPrimary(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  if (!RAPIDAPI_HOST) return null;
-
-  const attempts: Array<{ path: string; params: Record<string, string> }> = [
-    { path: '/index', params: { url: target.canonicalUrl } },
-    { path: '/', params: { url: target.canonicalUrl } },
-    { path: '/get-info', params: { url: target.canonicalUrl } },
-    { path: '/get_info', params: { url: target.canonicalUrl } },
-    { path: '/post', params: { shortcode: target.shortcode } },
-    { path: '/media', params: { shortcode: target.shortcode } },
-    { path: '/instagram', params: { url: target.canonicalUrl } },
-    { path: `/post/${target.shortcode}`, params: {} },
+function buildAttempts(target: InstagramTarget): Array<{ path: string; params: Record<string, string> }> {
+  const url = target.canonicalUrl;
+  const sc = target.shortcode;
+  return [
+    // instagram-downloader-download-instagram-stories-videos4
+    { path: '/index', params: { url } },
+    // instagram-downloader-scraper-reels-igtv-posts-stories (ntkz)
+    { path: '/api/v1/post', params: { url, link: url } },
+    { path: '/api/v1/post_info', params: { url, code_or_id_or_url: sc } },
+    { path: '/v1/post_info', params: { url, code_or_id_or_url: sc } },
+    // instagram-scraper-api2 (varying)
+    { path: '/v1/post_info', params: { code_or_id_or_url: sc } },
+    { path: '/v1/info', params: { url } },
+    // instagram-looter2
+    { path: '/post', params: { link: url, url, shortcode: sc } },
+    { path: '/post-dl', params: { url, link: url } },
+    // instagram-bulk-profile-scrapper
+    { path: '/clients/api/ig/media_by_url', params: { url } },
+    // generic
+    { path: '/', params: { url } },
+    { path: '/get-info', params: { url } },
+    { path: '/get_info', params: { url } },
+    { path: '/instagram', params: { url } },
+    { path: '/media', params: { url, shortcode: sc } },
+    { path: `/post/${sc}`, params: {} },
+    { path: '/info', params: { url } },
+    { path: '/data', params: { url } },
+    { path: '/download', params: { url } },
+    { path: '/dl', params: { url } },
+    { path: '/scrape', params: { url } },
   ];
+}
 
-  for (const a of attempts) {
-    const data = await callRapidApi(RAPIDAPI_HOST, a.path, a.params);
+async function fetchViaRapidApiHost(host: string, label: string, target: InstagramTarget): Promise<InstagramMediaResult | null> {
+  if (!host) return null;
+  for (const a of buildAttempts(target)) {
+    const data = await callRapidApi(host, a.path, a.params);
     if (!data) continue;
     const result = parseRapidApiResponse(data, target);
     if (result) {
-      console.log(`[primary] success via ${a.path}: ${result.items.length} item(s)`);
+      console.log(`[${label}] success via ${a.path}: ${result.items.length} item(s)`);
       return result;
     }
   }
   return null;
 }
 
-// ============================================================
-// Provider 2: RAPIDAPI_HOST_V2 (fallback)
-// ============================================================
-async function fetchViaRapidApiSecondary(target: InstagramTarget): Promise<InstagramMediaResult | null> {
-  if (!RAPIDAPI_HOST_V2) return null;
-
-  const attempts: Array<{ path: string; params: Record<string, string> }> = [
-    { path: '/index', params: { url: target.canonicalUrl } },
-    { path: '/', params: { url: target.canonicalUrl } },
-    { path: '/get-info', params: { url: target.canonicalUrl } },
-    { path: '/get_info', params: { url: target.canonicalUrl } },
-    { path: '/instagram', params: { url: target.canonicalUrl } },
-    { path: '/post', params: { shortcode: target.shortcode } },
-    { path: `/post/${target.shortcode}`, params: {} },
-    { path: '/media', params: { shortcode: target.shortcode } },
-  ];
-
-  for (const a of attempts) {
-    const data = await callRapidApi(RAPIDAPI_HOST_V2, a.path, a.params);
-    if (!data) continue;
-    const result = parseRapidApiResponse(data, target);
-    if (result) {
-      console.log(`[secondary] success via ${a.path}: ${result.items.length} item(s)`);
-      return result;
-    }
-  }
-  return null;
+async function fetchViaRapidApiPrimary(target: InstagramTarget) {
+  return fetchViaRapidApiHost(RAPIDAPI_HOST, 'primary', target);
 }
 
-// ============================================================
-// Main handler
+async function fetchViaRapidApiSecondary(target: InstagramTarget) {
+  return fetchViaRapidApiHost(RAPIDAPI_HOST_V2, 'secondary', target);
+}
 // ============================================================
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
