@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, ClipboardPaste, Download, Loader2, Image, Film, X, Trash2 } from "lucide-react";
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -9,6 +10,26 @@ interface MediaItem {
   thumbnail?: string;
   filename: string;
 }
+
+const getInvokeErrorMessage = async (error: unknown) => {
+  if (error instanceof FunctionsHttpError && error.context instanceof Response) {
+    try {
+      const payload = await error.context.clone().json();
+      if (payload && typeof payload === "object" && typeof payload.error === "string") {
+        return payload.error;
+      }
+    } catch {
+      try {
+        const text = await error.context.clone().text();
+        if (text.trim()) return text;
+      } catch {
+        return error.message;
+      }
+    }
+  }
+
+  return error instanceof Error ? error.message : "Erro ao processar o link. Tente novamente.";
+};
 
 const URLInput = () => {
   const [url, setUrl] = useState("");
@@ -65,9 +86,9 @@ const URLInput = () => {
 
       setMediaItems(data.items);
       toast.success(`${data.items.length} arquivo(s) encontrado(s)!`);
-    } catch (err: any) {
+    } catch (err) {
       console.error("Error:", err);
-      toast.error(err.message || "Erro ao processar o link. Tente novamente.");
+      toast.error(await getInvokeErrorMessage(err));
     } finally {
       setLoading(false);
     }
