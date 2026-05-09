@@ -141,11 +141,24 @@ async function callRapidApi(host: string, path: string, params: Record<string, s
         'Accept': 'application/json',
       },
     });
-    const text = await res.text();
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
     if (!res.ok) {
+      const text = await res.text();
       console.log(`[rapidapi:${host}] ${path} -> HTTP ${res.status} body=${text.slice(0,200)}`);
       return null;
     }
+
+    if (contentType.startsWith('video/') || contentType.startsWith('image/') || contentType.includes('octet-stream')) {
+      console.log(`[rapidapi:${host}] ${path} -> 200 media content-type=${contentType} finalUrl=${res.url}`);
+      return {
+        result: [{
+          url: res.url,
+          type: contentType.startsWith('video/') ? 'video' : 'image',
+        }],
+      };
+    }
+
+    const text = await res.text();
     console.log(`[rapidapi:${host}] ${path} -> 200 body=${text.slice(0,400)}`);
     let parsed: any;
     try { parsed = JSON.parse(text); } catch { return null; }
