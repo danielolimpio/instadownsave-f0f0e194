@@ -31,6 +31,21 @@ const getInvokeErrorMessage = async (error: unknown) => {
   return error instanceof Error ? error.message : "Erro ao processar o link. Tente novamente.";
 };
 
+const getFunctionsBaseUrl = () => `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
+
+const getSessionHeaders = async () => {
+  const { data } = await supabase.auth.getSession();
+  const headers: Record<string, string> = {
+    apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+  };
+
+  if (data.session?.access_token) {
+    headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
+
+  return headers;
+};
+
 const URLInput = () => {
   const [url, setUrl] = useState("");
   const [loading, setLoading] = useState(false);
@@ -98,13 +113,29 @@ const URLInput = () => {
     setDownloading((prev) => ({ ...prev, [index]: true }));
 
     try {
-      const { data, error } = await supabase.functions.invoke("instagram-proxy", {
-        body: { url: item.url, filename: item.filename },
+      const headers = await getSessionHeaders();
+      const response = await fetch(`${getFunctionsBaseUrl()}/instagram-proxy`, {
+        method: "POST",
+        headers: {
+          ...headers,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ url: item.url, filename: item.filename }),
       });
 
-      if (error) throw error;
+      if (!response.ok) {
+        let message = "Falha ao baixar o arquivo.";
+        try {
+          const payload = await response.clone().json();
+          if (payload?.error) message = payload.error;
+        } catch {
+          const text = await response.text();
+          if (text.trim()) message = text;
+        }
+        throw new Error(message);
+      }
 
-      const blob = data instanceof Blob ? data : new Blob([data]);
+      const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = blobUrl;
@@ -139,13 +170,13 @@ const URLInput = () => {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="Cole o link do Instagram aqui..."
-          className="w-full h-12 sm:h-14 pl-10 sm:pl-12 pr-28 sm:pr-36 bg-transparent text-foreground placeholder:text-muted-foreground text-sm sm:text-base outline-none rounded-lg"
+          className="w-full h-12 sm:h-14 pl-10 sm:pl-12 pr-24 sm:pr-52 bg-transparent text-foreground placeholder:text-muted-foreground text-sm sm:text-base outline-none rounded-lg overflow-hidden text-ellipsis whitespace-nowrap"
         />
-        <div className="absolute right-2 sm:right-3 flex items-center gap-1">
+        <div className="absolute right-2 sm:right-3 flex items-center gap-1 bg-card pl-2">
           {url && (
             <button
               onClick={handleClear}
-              className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10 rounded-md transition-colors"
+              className="flex items-center gap-1 px-2 py-1.5 text-sm font-medium text-destructive hover:bg-destructive/10 rounded-md transition-colors shrink-0"
               title="Limpar"
             >
               <Trash2 className="h-4 w-4" />
@@ -154,7 +185,7 @@ const URLInput = () => {
           )}
           <button
             onClick={handlePaste}
-            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 text-sm font-medium text-primary hover:bg-secondary rounded-md transition-colors"
+            className="flex items-center gap-1 px-2 sm:px-3 py-1.5 text-sm font-medium text-primary hover:bg-secondary rounded-md transition-colors shrink-0"
           >
             <ClipboardPaste className="h-4 w-4" />
             <span className="hidden sm:inline">Colar</span>
