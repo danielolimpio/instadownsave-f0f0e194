@@ -170,7 +170,7 @@ const URLInput = () => {
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
           placeholder="Cole o link do Instagram aqui..."
-          className="w-full h-12 sm:h-14 pl-10 sm:pl-12 pr-24 sm:pr-52 bg-transparent text-foreground placeholder:text-muted-foreground text-sm sm:text-base outline-none rounded-lg truncate"
+          className="w-full h-12 sm:h-14 pl-10 sm:pl-12 pr-24 sm:pr-52 bg-transparent text-foreground placeholder:text-muted-foreground text-sm sm:text-base outline-none rounded-lg overflow-hidden text-ellipsis whitespace-nowrap"
         />
         <div className="absolute right-2 sm:right-3 flex items-center gap-1 bg-card pl-2">
           {url && (
