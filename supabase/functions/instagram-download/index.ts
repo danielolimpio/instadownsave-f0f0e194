@@ -80,6 +80,13 @@ function sanitizeMediaUrl(value: unknown): string | undefined {
   return /^https?:\/\//i.test(raw) ? raw : undefined;
 }
 
+function inferMediaType(rawUrl: string, fallback?: MediaType): MediaType | null {
+  const cleanUrl = rawUrl.toLowerCase();
+  if (/\.(mp4|m4v|mov|webm)(?:$|\?)/i.test(cleanUrl)) return 'video';
+  if (/\.(jpe?g|png|webp|gif|bmp|heic|heif|avif)(?:$|\?)/i.test(cleanUrl)) return 'image';
+  return fallback ?? null;
+}
+
 function buildFilename(type: MediaType, shortcode: string, index: number, url: string): string {
   const imageExt = url.match(/\.(jpe?g|png|webp)(?:$|\?)/i)?.[1]?.toLowerCase() ?? 'jpg';
   const normalized = imageExt === 'jpeg' ? 'jpg' : imageExt;
@@ -115,7 +122,7 @@ function extractInstagramTarget(rawUrl: string): InstagramTarget | null {
   }
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 25000): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 8000): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort('timeout'), timeoutMs);
   try {
@@ -215,6 +222,7 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       node.videoUrl,
       node.video,
       node.url_video,
+      typeof node.media === 'string' && inferMediaType(node.media) === 'video' ? node.media : undefined,
       node.download_url,
       node.downloadUrl,
       node.src,
@@ -231,6 +239,7 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       node.displayUrl,
       node.image_url,
       node.imageUrl,
+      typeof node.media === 'string' && inferMediaType(node.media) === 'image' ? node.media : undefined,
       node.thumbnail,
       node.thumbnail_url,
       node.thumbnail_src,
@@ -253,14 +262,14 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
       || node.type === 'GraphVideo';
 
     // Direct shape: { type: "image"|"video", url, thumbnail } (used by /convert)
-    const directUrl = sanitizeMediaUrl(node.url ?? node.link ?? node.href ?? node.download_url ?? node.downloadUrl);
+    const directUrl = sanitizeMediaUrl(node.url ?? node.link ?? node.href ?? node.download_url ?? node.downloadUrl ?? node.media);
     const normalizedType = typeof node.type === 'string' ? node.type.toLowerCase() : '';
     const directType: MediaType | null = directUrl
       ? normalizedType === 'video' || normalizedType === 'mp4' || /\.(mp4|m4v|mov)(?:$|\?)/i.test(directUrl) || node.is_video === true || node.media_type === 2
         ? 'video'
         : normalizedType === 'image' || normalizedType === 'photo' || /\.(jpe?g|png|webp)(?:$|\?)/i.test(directUrl)
           ? 'image'
-          : null
+          : inferMediaType(directUrl)
       : null;
 
     if (directUrl && directType && !videoUrl) {
@@ -342,6 +351,10 @@ function parseRapidApiResponse(data: any, target: InstagramTarget): InstagramMed
   }
 
   if (!items.length) return null;
+
+  if (target.resourceType === 'reel' && !items.some((item) => item.type === 'video')) {
+    return null;
+  }
 
   // Backfill thumbnails for videos
   for (const item of items) {
