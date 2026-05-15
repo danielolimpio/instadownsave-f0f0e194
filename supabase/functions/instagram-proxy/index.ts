@@ -5,6 +5,24 @@ const corsHeaders = {
 
 const RAPIDAPI_KEY = Deno.env.get('RAPIDAPI_KEY') ?? '';
 
+function getSafeFilename(filename: string | undefined, contentType: string, url: string) {
+  const type = contentType.toLowerCase();
+  const extFromType = type.includes('video/') ? 'mp4'
+    : type.includes('png') ? 'png'
+    : type.includes('webp') ? 'webp'
+    : type.includes('gif') ? 'gif'
+    : type.includes('jpeg') || type.includes('jpg') ? 'jpg'
+    : undefined;
+
+  const extFromUrl = url.match(/\.([a-z0-9]{2,5})(?:$|\?)/i)?.[1]?.toLowerCase();
+  const finalExt = extFromType ?? extFromUrl ?? 'bin';
+  const baseName = (filename || `instagram_download_${Date.now()}`)
+    .replace(/\.[a-z0-9]{2,5}$/i, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '_');
+
+  return `${baseName}.${finalExt}`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -58,14 +76,15 @@ Deno.serve(async (req) => {
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
     const body = await response.arrayBuffer();
 
-    const safeName = filename || `instagram_download_${Date.now()}`;
+    const safeName = getSafeFilename(filename, contentType, response.url || url);
 
     return new Response(body, {
       headers: {
         ...corsHeaders,
-        'Content-Type': contentType,
+        'Content-Type': 'application/octet-stream',
         'Content-Disposition': `attachment; filename="${safeName}"`,
         'Content-Length': body.byteLength.toString(),
+        'X-Original-Content-Type': contentType,
       },
     });
   } catch (error) {
