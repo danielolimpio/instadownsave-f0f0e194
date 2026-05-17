@@ -381,6 +381,10 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
     // instagram-downloader-download-instagram-stories-videos4 (Glavier) — confirmed
     { path: '/convert', params: { url } },
     { path: '/index', params: { url } },
+    // instagram-downloader38 — uses /download as a redirect
+    { path: '/download', params: { url } },
+    // instagram-post-reels-stories-downloader-api — uses /instagram
+    { path: '/instagram', params: { url } },
     // instagram-downloader-scraper-reels-igtv-posts-stories (ntkz)
     { path: '/api/v1/post', params: { url, link: url } },
     { path: '/api/v1/post_info', params: { url, code_or_id_or_url: sc } },
@@ -397,12 +401,10 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
     { path: '/', params: { url } },
     { path: '/get-info', params: { url } },
     { path: '/get_info', params: { url } },
-    { path: '/instagram', params: { url } },
     { path: '/media', params: { url, shortcode: sc } },
     { path: `/post/${sc}`, params: {} },
     { path: '/info', params: { url } },
     { path: '/data', params: { url } },
-    { path: '/download', params: { url } },
     { path: '/dl', params: { url } },
     { path: '/scrape', params: { url } },
   ];
@@ -421,19 +423,6 @@ async function fetchViaRapidApiHost(host: string, label: string, target: Instagr
   }
   return null;
 }
-
-async function fetchViaRapidApiPrimary(target: InstagramTarget) {
-  return fetchViaRapidApiHost(RAPIDAPI_HOST, 'primary', target);
-}
-
-async function fetchViaRapidApiSecondary(target: InstagramTarget) {
-  return fetchViaRapidApiHost(RAPIDAPI_HOST_V2, 'secondary', target);
-}
-// ============================================================
-Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
-  }
 
   try {
     const body = await req.json().catch(() => ({}));
