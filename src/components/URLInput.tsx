@@ -170,6 +170,7 @@ const URLInput = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
 
+      saveToHistory(item);
       toast.success("Download iniciado!");
     } catch (err) {
       console.error("Download error:", err);
