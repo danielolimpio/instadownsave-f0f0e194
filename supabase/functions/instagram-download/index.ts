@@ -424,6 +424,11 @@ async function fetchViaRapidApiHost(host: string, label: string, target: Instagr
   return null;
 }
 
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
     const rawUrl = sanitizeText(body?.url);
