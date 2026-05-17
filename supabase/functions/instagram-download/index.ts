@@ -469,7 +469,7 @@ Deno.serve(async (req) => {
     if (!result || !result.items.length) {
       return jsonResponse({
         success: false,
-        error: 'Não foi possível extrair a mídia. O post pode ser privado, ter sido removido, ou estar temporariamente indisponível.',
+        error: 'Não conseguimos extrair a mídia deste link no momento. Tente novamente em alguns minutos. Se o post for público e o erro continuar, pode ser uma limitação temporária dos provedores.',
       }, 404);
     }
 
