@@ -49,19 +49,15 @@ const DEFAULTS = [
   'instagram-post-reels-stories-downloader-api.p.rapidapi.com',
 ];
 
-const pickHost = (env: string, fallback: string, used: Set<string>) => {
-  const chosen = isValidHost(env) ? env : fallback;
-  if (used.has(chosen)) return '';
-  used.add(chosen);
-  return chosen;
-};
-const _used = new Set<string>();
-const RAPIDAPI_HOST = pickHost(ENV_HOST_1, DEFAULTS[0], _used);
-const RAPIDAPI_HOST_V2 = pickHost(ENV_HOST_2, DEFAULTS[1], _used);
-const RAPIDAPI_HOST_V3 = pickHost(ENV_HOST_3, DEFAULTS[2], _used);
-const RAPIDAPI_HOST_V4 = pickHost(ENV_HOST_4, DEFAULTS[3], _used);
-const RAPIDAPI_HOST_V5 = pickHost(ENV_HOST_5, DEFAULTS[4], _used);
-const ALL_HOSTS = [RAPIDAPI_HOST, RAPIDAPI_HOST_V2, RAPIDAPI_HOST_V3, RAPIDAPI_HOST_V4, RAPIDAPI_HOST_V5].filter(Boolean);
+// Build host list: prefer env-provided hosts first (if valid), then defaults,
+// always deduped. Never drop a default just because an env host overlaps.
+const _seen = new Set<string>();
+const ALL_HOSTS: string[] = [];
+for (const h of [ENV_HOST_1, ENV_HOST_2, ENV_HOST_3, ENV_HOST_4, ENV_HOST_5, ...DEFAULTS]) {
+  if (!h || !isValidHost(h) || _seen.has(h)) continue;
+  _seen.add(h);
+  ALL_HOSTS.push(h);
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
