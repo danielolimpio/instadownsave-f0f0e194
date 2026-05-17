@@ -49,19 +49,15 @@ const DEFAULTS = [
   'instagram-post-reels-stories-downloader-api.p.rapidapi.com',
 ];
 
-const pickHost = (env: string, fallback: string, used: Set<string>) => {
-  const chosen = isValidHost(env) ? env : fallback;
-  if (used.has(chosen)) return '';
-  used.add(chosen);
-  return chosen;
-};
-const _used = new Set<string>();
-const RAPIDAPI_HOST = pickHost(ENV_HOST_1, DEFAULTS[0], _used);
-const RAPIDAPI_HOST_V2 = pickHost(ENV_HOST_2, DEFAULTS[1], _used);
-const RAPIDAPI_HOST_V3 = pickHost(ENV_HOST_3, DEFAULTS[2], _used);
-const RAPIDAPI_HOST_V4 = pickHost(ENV_HOST_4, DEFAULTS[3], _used);
-const RAPIDAPI_HOST_V5 = pickHost(ENV_HOST_5, DEFAULTS[4], _used);
-const ALL_HOSTS = [RAPIDAPI_HOST, RAPIDAPI_HOST_V2, RAPIDAPI_HOST_V3, RAPIDAPI_HOST_V4, RAPIDAPI_HOST_V5].filter(Boolean);
+// Build host list: prefer env-provided hosts first (if valid), then defaults,
+// always deduped. Never drop a default just because an env host overlaps.
+const _seen = new Set<string>();
+const ALL_HOSTS: string[] = [];
+for (const h of [ENV_HOST_1, ENV_HOST_2, ENV_HOST_3, ENV_HOST_4, ENV_HOST_5, ...DEFAULTS]) {
+  if (!h || !isValidHost(h) || _seen.has(h)) continue;
+  _seen.add(h);
+  ALL_HOSTS.push(h);
+}
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -385,6 +381,10 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
     // instagram-downloader-download-instagram-stories-videos4 (Glavier) — confirmed
     { path: '/convert', params: { url } },
     { path: '/index', params: { url } },
+    // instagram-downloader38 — uses /download as a redirect
+    { path: '/download', params: { url } },
+    // instagram-post-reels-stories-downloader-api — uses /instagram
+    { path: '/instagram', params: { url } },
     // instagram-downloader-scraper-reels-igtv-posts-stories (ntkz)
     { path: '/api/v1/post', params: { url, link: url } },
     { path: '/api/v1/post_info', params: { url, code_or_id_or_url: sc } },
@@ -401,12 +401,10 @@ function buildAttempts(target: InstagramTarget): Array<{ path: string; params: R
     { path: '/', params: { url } },
     { path: '/get-info', params: { url } },
     { path: '/get_info', params: { url } },
-    { path: '/instagram', params: { url } },
     { path: '/media', params: { url, shortcode: sc } },
     { path: `/post/${sc}`, params: {} },
     { path: '/info', params: { url } },
     { path: '/data', params: { url } },
-    { path: '/download', params: { url } },
     { path: '/dl', params: { url } },
     { path: '/scrape', params: { url } },
   ];
@@ -426,14 +424,6 @@ async function fetchViaRapidApiHost(host: string, label: string, target: Instagr
   return null;
 }
 
-async function fetchViaRapidApiPrimary(target: InstagramTarget) {
-  return fetchViaRapidApiHost(RAPIDAPI_HOST, 'primary', target);
-}
-
-async function fetchViaRapidApiSecondary(target: InstagramTarget) {
-  return fetchViaRapidApiHost(RAPIDAPI_HOST_V2, 'secondary', target);
-}
-// ============================================================
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -479,7 +469,7 @@ Deno.serve(async (req) => {
     if (!result || !result.items.length) {
       return jsonResponse({
         success: false,
-        error: 'Não foi possível extrair a mídia. O post pode ser privado, ter sido removido, ou estar temporariamente indisponível.',
+        error: 'Não conseguimos extrair a mídia deste link no momento. Tente novamente em alguns minutos. Se o post for público e o erro continuar, pode ser uma limitação temporária dos provedores.',
       }, 404);
     }
 

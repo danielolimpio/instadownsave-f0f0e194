@@ -99,13 +99,38 @@ const URLInput = () => {
         throw new Error(data?.error || "Não foi possível encontrar mídia neste link.");
       }
 
-      setMediaItems(data.items);
-      toast.success(`${data.items.length} arquivo(s) encontrado(s)!`);
+      const fallbackThumb: string | undefined = data.thumbnail;
+      const enriched: MediaItem[] = data.items.map((it: MediaItem) => ({
+        ...it,
+        thumbnail: it.thumbnail || fallbackThumb,
+      }));
+
+      setMediaItems(enriched);
+      toast.success(`${enriched.length} arquivo(s) encontrado(s)!`);
     } catch (err) {
       console.error("Error:", err);
       toast.error(await getInvokeErrorMessage(err));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveToHistory = (item: MediaItem) => {
+    try {
+      const raw = localStorage.getItem("instasave_downloads");
+      const list = raw ? JSON.parse(raw) : [];
+      const entry = {
+        id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        url: url.trim(),
+        type: item.type === "video" ? "Vídeo" : "Imagem",
+        date: new Date().toLocaleString("pt-BR"),
+        filename: item.filename,
+        thumbnail: item.thumbnail,
+      };
+      const updated = [entry, ...list].slice(0, 50);
+      localStorage.setItem("instasave_downloads", JSON.stringify(updated));
+    } catch (e) {
+      console.warn("Falha ao salvar no histórico", e);
     }
   };
 
@@ -145,6 +170,7 @@ const URLInput = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(blobUrl);
 
+      saveToHistory(item);
       toast.success("Download iniciado!");
     } catch (err) {
       console.error("Download error:", err);
