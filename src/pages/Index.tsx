@@ -16,6 +16,10 @@ const Index = () => {
         <title>Baixar Vídeos do Instagram Sem Marca d'Água - InstaSave</title>
         <meta name="description" content="Baixe vídeos do Instagram sem marca d'água em alta qualidade. Reels, IGTV, Stories e fotos. Ferramenta 100% grátis e ilimitada." />
         <link rel="canonical" href="https://baixarvideosinstagram.com" />
+        <meta property="og:title" content="Baixar Vídeos do Instagram Sem Marca d'Água - InstaSave" />
+        <meta property="og:description" content="Baixe vídeos do Instagram sem marca d'água em alta qualidade. Reels, IGTV, Stories e fotos. Ferramenta 100% grátis e ilimitada." />
+        <meta property="og:url" content="https://baixarvideosinstagram.com" />
+        <meta property="og:type" content="website" />
       </Helmet>
 
       <HeroSection />

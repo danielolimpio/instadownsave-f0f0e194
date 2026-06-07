@@ -38,6 +38,10 @@ const Configuracoes = () => {
         <title>Configurações - InstaSave</title>
         <meta name="description" content="Configure suas preferências de download do Instagram. Escolha qualidade padrão, formato e outras opções." />
         <link rel="canonical" href="https://baixarvideosinstagram.com/configuracoes" />
+        <meta property="og:title" content="Configurações - InstaSave" />
+        <meta property="og:description" content="Configure suas preferências de download do Instagram. Escolha qualidade padrão, formato e outras opções." />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/configuracoes" />
+        <meta property="og:type" content="website" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">
