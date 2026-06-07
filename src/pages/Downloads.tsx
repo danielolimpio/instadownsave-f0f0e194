@@ -37,6 +37,10 @@ const Downloads = () => {
         <title>Histórico de Downloads - InstaSave</title>
         <meta name="description" content="Veja seu histórico de downloads do Instagram. Acesse novamente vídeos, Reels, Stories e fotos baixados recentemente." />
         <link rel="canonical" href="https://baixarvideosinstagram.com/downloads" />
+        <meta property="og:title" content="Histórico de Downloads - InstaSave" />
+        <meta property="og:description" content="Veja seu histórico de downloads do Instagram. Acesse novamente vídeos, Reels, Stories e fotos baixados." />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/downloads" />
+        <meta property="og:type" content="website" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">
