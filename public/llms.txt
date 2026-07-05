@@ -7,9 +7,9 @@ InstaSave (baixarvideosinstagram.com) é um downloader online para Instagram que
 ## Pages
 
 - [Home](/): Downloader principal para vídeos do Instagram. Cole o link e baixe em alta qualidade.
-- [Reels](/reels): Página dedicada ao download de Reels do Instagram.
-- [IGTV](/igtv): Download de vídeos longos do IGTV.
-- [Stories](/stories): Salvar Stories do Instagram antes que desapareçam.
-- [Fotos](/fotos): Download de imagens e carrosséis do Instagram.
+- [Baixar Reels Instagram](/baixar-reels-instagram): Página dedicada ao download de Reels do Instagram sem marca d'água.
+- [Baixar IGTV Instagram](/baixar-igtv-instagram): Download de vídeos longos do IGTV em alta qualidade.
+- [Baixar Stories Instagram](/baixar-stories-instagram): Salvar Stories do Instagram antes que desapareçam.
+- [Baixar Fotos Instagram](/baixar-fotos-instagram): Download de imagens e carrosséis do Instagram em resolução original.
 - [Downloads](/downloads): Histórico de downloads realizados na sessão.
 - [Configurações](/configuracoes): Preferências do aplicativo e opções de idioma.

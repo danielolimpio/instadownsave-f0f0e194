@@ -8,10 +8,10 @@ const Stories = () => {
       <Helmet>
         <title>Baixar Stories do Instagram Grátis - InstaSave</title>
         <meta name="description" content="Baixe Stories do Instagram antes que expirem. Salve stories, destaques e vídeos de 24 horas em alta qualidade, sem marca d'água." />
-        <link rel="canonical" href="https://baixarvideosinstagram.com/stories" />
+        <link rel="canonical" href="https://baixarvideosinstagram.com/baixar-stories-instagram" />
         <meta property="og:title" content="Baixar Stories do Instagram - InstaSave" />
         <meta property="og:description" content="Salve Stories do Instagram antes que desapareçam. Download gratuito em alta qualidade." />
-        <meta property="og:url" content="https://baixarvideosinstagram.com/stories" />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/baixar-stories-instagram" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">

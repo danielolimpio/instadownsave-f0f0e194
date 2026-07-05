@@ -8,10 +8,10 @@ const Reels = () => {
       <Helmet>
         <title>Baixar Reels do Instagram Grátis - InstaSave</title>
         <meta name="description" content="Baixe Reels do Instagram sem marca d'água em alta qualidade. Salve vídeos curtos do Instagram Reels gratuitamente no seu celular ou computador." />
-        <link rel="canonical" href="https://baixarvideosinstagram.com/reels" />
+        <link rel="canonical" href="https://baixarvideosinstagram.com/baixar-reels-instagram" />
         <meta property="og:title" content="Baixar Reels do Instagram Grátis - InstaSave" />
         <meta property="og:description" content="Ferramenta gratuita para baixar Reels do Instagram sem marca d'água em Full HD." />
-        <meta property="og:url" content="https://baixarvideosinstagram.com/reels" />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/baixar-reels-instagram" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">

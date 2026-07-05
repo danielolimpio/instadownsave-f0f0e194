@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
@@ -24,11 +24,16 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Index />} />
-            <Route path="/reels" element={<Reels />} />
-            <Route path="/igtv" element={<IGTV />} />
-            <Route path="/stories" element={<Stories />} />
-            <Route path="/fotos" element={<Fotos />} />
+            <Route path="/baixar-reels-instagram" element={<Reels />} />
+            <Route path="/baixar-igtv-instagram" element={<IGTV />} />
+            <Route path="/baixar-stories-instagram" element={<Stories />} />
+            <Route path="/baixar-fotos-instagram" element={<Fotos />} />
             <Route path="/downloads" element={<Downloads />} />
+            {/* Legacy redirects (301-style via SPA) para preservar SEO das URLs antigas */}
+            <Route path="/reels" element={<Navigate to="/baixar-reels-instagram" replace />} />
+            <Route path="/igtv" element={<Navigate to="/baixar-igtv-instagram" replace />} />
+            <Route path="/stories" element={<Navigate to="/baixar-stories-instagram" replace />} />
+            <Route path="/fotos" element={<Navigate to="/baixar-fotos-instagram" replace />} />
             <Route path="/configuracoes" element={<Configuracoes />} />
             <Route path="*" element={<NotFound />} />
           </Routes>

@@ -8,10 +8,10 @@ const IGTV = () => {
       <Helmet>
         <title>Baixar Vídeos IGTV do Instagram Grátis - InstaSave</title>
         <meta name="description" content="Baixe vídeos IGTV do Instagram em alta qualidade. Salve vídeos longos do IGTV sem marca d'água gratuitamente." />
-        <link rel="canonical" href="https://baixarvideosinstagram.com/igtv" />
+        <link rel="canonical" href="https://baixarvideosinstagram.com/baixar-igtv-instagram" />
         <meta property="og:title" content="Baixar Vídeos IGTV do Instagram - InstaSave" />
         <meta property="og:description" content="Baixe vídeos IGTV do Instagram sem marca d'água. Suporte a vídeos de até 60 minutos." />
-        <meta property="og:url" content="https://baixarvideosinstagram.com/igtv" />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/baixar-igtv-instagram" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">
