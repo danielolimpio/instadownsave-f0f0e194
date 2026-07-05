@@ -4,10 +4,10 @@ import logo from "@/assets/logo.png";
 
 const navItems = [
   { icon: Home, label: "Início", path: "/" },
-  { icon: Video, label: "Reels", path: "/reels" },
-  { icon: Tv, label: "IGTV", path: "/igtv" },
-  { icon: Circle, label: "Stories", path: "/stories" },
-  { icon: Image, label: "Fotos", path: "/fotos" },
+  { icon: Video, label: "Baixar Reels Instagram", path: "/baixar-reels-instagram" },
+  { icon: Tv, label: "Baixar IGTV Instagram", path: "/baixar-igtv-instagram" },
+  { icon: Circle, label: "Baixar Stories Instagram", path: "/baixar-stories-instagram" },
+  { icon: Image, label: "Baixar Fotos Instagram", path: "/baixar-fotos-instagram" },
   { icon: Download, label: "Downloads", path: "/downloads" },
   { icon: Settings, label: "Configurações", path: "/configuracoes" },
 ];

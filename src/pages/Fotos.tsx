@@ -8,10 +8,10 @@ const Fotos = () => {
       <Helmet>
         <title>Baixar Fotos do Instagram em Alta Resolução - InstaSave</title>
         <meta name="description" content="Baixe fotos do Instagram em resolução original. Salve imagens de posts, carrossel e perfil em alta qualidade sem perda de qualidade." />
-        <link rel="canonical" href="https://baixarvideosinstagram.com/fotos" />
+        <link rel="canonical" href="https://baixarvideosinstagram.com/baixar-fotos-instagram" />
         <meta property="og:title" content="Baixar Fotos do Instagram em Alta Resolução" />
         <meta property="og:description" content="Salve fotos do Instagram em qualidade original. Download de posts, carrosséis e fotos de perfil." />
-        <meta property="og:url" content="https://baixarvideosinstagram.com/fotos" />
+        <meta property="og:url" content="https://baixarvideosinstagram.com/baixar-fotos-instagram" />
       </Helmet>
 
       <section className="py-10 lg:py-16 px-4">
