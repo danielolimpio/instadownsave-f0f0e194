@@ -50,7 +50,9 @@ let exitCode = 0;
 try {
   await waitReady();
   console.log("[prerender] server ready, launching browser");
-  const browser = await chromium.launch();
+  // Prefer system chromium if available (sandbox); otherwise use Playwright's bundled one (CI).
+  const sysChromium = existsSync("/bin/chromium") ? "/bin/chromium" : undefined;
+  const browser = await chromium.launch(sysChromium ? { executablePath: sysChromium } : {});
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 
   for (const route of ROUTES) {
