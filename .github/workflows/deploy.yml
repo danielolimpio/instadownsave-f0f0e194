@@ -20,7 +20,10 @@ jobs:
       - name: Instalar dependências
         run: npm install
 
-      - name: Build do projeto
+      - name: Instalar Chromium (Playwright) para SSG
+        run: npx playwright install --with-deps chromium
+
+      - name: Build do projeto (com SSG prerender)
         run: npm run build
 
       - name: Mostrar arquivos gerados
